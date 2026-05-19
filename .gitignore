@@ -34,6 +34,7 @@ Thumbs.db
 
 # Editor
 .vscode/
+.windsurf/
 .idea/
 *.swp
 *.swo
@@ -47,3 +48,11 @@ backend/uploads/
 # Test artifacts
 coverage/
 test_port_change.js
+
+# Debug & temporary scripts
+debug_*.js
+direct_test.js
+check_*.js
+*_create_new.js
+*.patch
+*.backup
