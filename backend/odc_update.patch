@@ -1,0 +1,27 @@
+--- a/src/routes/odc.js
++++ b/src/routes/odc.js
+@@ -347,6 +347,19 @@
+         }
+       })
++      
++      // Update upstream ODC port status if connected to another ODC
++      if (uplinkType === 'odc' && uplinkOdcId && uplinkPort) {
++        // Parse uplinkPort format: "splitterId-portNumber"
++        const [splitterId, portNumber] = uplinkPort.split('-')
++        if (splitterId && portNumber) {
++          await tx.splitterPort.updateMany({
++            where: {
++              splitterInstanceId: splitterId,
++              portNumber: parseInt(portNumber)
++            },
++            data: {
++              connectionStatus: 'CONNECTED',
++              connectedToType: 'ODC',
++              connectedToId: newOdc.id
++            }
++          })
++        }
++      }
+     })
+ 
+     // Calculate capacity from splitters

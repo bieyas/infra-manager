@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment variables — JANGAN pernah commit file ini
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+
+# Prisma generated
+backend/src/generated/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# PM2
+.pm2/
+
+# Uploads (data lokal, bukan kode)
+backend/uploads/
+
+# Test artifacts
+coverage/
+test_port_change.js

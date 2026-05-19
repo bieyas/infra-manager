@@ -1,0 +1,573 @@
+import { Router } from 'express'
+import prisma from '../lib/prisma.js'
+import { authenticate, requireRole } from '../middleware/auth.js'
+
+const router = Router()
+router.use(authenticate)
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Recompute usedPorts = count of ODPs linked to this ODC */
+async function syncUsedPorts(odcId) {
+  const count = await prisma.odp.count({ where: { odcId } })
+  await prisma.odc.update({ where: { id: odcId }, data: { usedPorts: count } })
+}
+
+/** Map SplitterRatio enum → numeric capacity (legacy) */
+function ratioToCapacity(ratio) {
+  const map = { R1_2: 2, R1_4: 4, R1_8: 8, R1_16: 16, R1_32: 32 }
+  return map[ratio] || null
+}
+
+/** Calculate total outputs from splitters array */
+function calculateTotalOutputs(splitters) {
+  if (!splitters || splitters.length === 0) return 0
+  return splitters.reduce((sum, s) => {
+    const type = s.splitterType
+    if (!type) return sum
+    return sum + type.outputCount
+  }, 0)
+}
+
+/** Calculate used outputs from splitters port connections */
+function calculateUsedOutputs(splitters) {
+  if (!splitters || splitters.length === 0) return 0
+  let used = 0
+  splitters.forEach(s => {
+    if (s.ports) {
+      used += s.ports.filter(p => p.connectionStatus === 'CONNECTED').length
+    }
+  })
+  return used
+}
+
+// ── GET /api/odc  — list all ODCs ─────────────────────────────────────────────
+router.get('/', async (req, res, next) => {
+  try {
+    const { oltId, status, search } = req.query
+
+    const where = {}
+    if (oltId)  where.oltId  = oltId
+    if (status) where.status = status.toUpperCase()
+    if (search) where.OR = [
+      { name:    { contains: search, mode: 'insensitive' } },
+      { address: { contains: search, mode: 'insensitive' } },
+    ]
+
+    // Fetch all ODCs (needed to build cores array for cascade connections)
+    const allOdcs = await prisma.odc.findMany({
+      select: {
+        id: true,
+        name: true,
+        uplinkOdcId: true,
+        uplinkCore: true,
+      },
+      where: { uplinkOdcId: { not: null } },
+    })
+
+    // Group child ODCs by their parent
+    const childrenByParent = {}
+    allOdcs.forEach(child => {
+      if (child.uplinkOdcId && child.uplinkCore) {
+        if (!childrenByParent[child.uplinkOdcId]) {
+          childrenByParent[child.uplinkOdcId] = []
+        }
+        childrenByParent[child.uplinkOdcId].push({
+          coreNo: parseInt(child.uplinkCore),
+          usedBy: child.id,
+          usedByName: child.name,
+        })
+      }
+    })
+
+    const odcs = await prisma.odc.findMany({
+      where,
+      include: {
+        olt:  { select: { id: true, name: true, ip: true } },
+        odps: { select: { id: true, name: true, usedPorts: true, splitterRatio: true } },
+        splitters: {
+          include: {
+            splitterType: true,
+            ports: {
+              select: {
+                id: true,
+                portNumber: true,
+                portLabel: true,
+                portType: true,
+                connectionStatus: true,
+                connectedToType: true,
+                connectedToId: true,
+                attenuation: true,
+                calculatedRxPower: true,
+              }
+            }
+          },
+          orderBy: { sequenceOrder: 'asc' }
+        },
+      },
+      orderBy: { name: 'asc' },
+    })
+
+    // Compute capacity and availability from new splitters system
+    const result = odcs.map(o => {
+      const totalOutputs = calculateTotalOutputs(o.splitters)
+      const usedOutputs = calculateUsedOutputs(o.splitters)
+      
+      return {
+        ...o,
+        cores: childrenByParent[o.id] || [],
+        // New splitter-based calculations
+        totalOutputs,
+        usedOutputs,
+        availableOutputs: totalOutputs - usedOutputs,
+        // Legacy fields (for backward compatibility)
+        capacity: totalOutputs || ratioToCapacity(o.splitterRatio),
+        available: (totalOutputs || ratioToCapacity(o.splitterRatio) || 0) - usedOutputs,
+      }
+    })
+
+    res.json(result)
+  } catch (e) { next(e) }
+})
+
+// ── GET /api/odc/:id ──────────────────────────────────────────────────────────
+router.get('/:id', async (req, res, next) => {
+  try {
+    const odc = await prisma.odc.findUnique({
+      where: { id: req.params.id },
+      include: {
+        olt:  { select: { id: true, name: true, ip: true, ponCount: true } },
+        odps: {
+          include: {
+            _count: { select: { customers: true } },
+            splitters: {
+              include: {
+                splitterType: true,
+                ports: true,
+              }
+            }
+          },
+          orderBy: { name: 'asc' },
+        },
+        splitters: {
+          include: {
+            splitterType: true,
+            ports: {
+              include: {
+                customers: { select: { id: true, name: true } }
+              }
+            },
+            inputConnection: {
+              include: {
+                fromPort: {
+                  include: {
+                    splitterInstance: {
+                      include: {
+                        odc: { select: { id: true, name: true } },
+                        odp: { select: { id: true, name: true } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          orderBy: { sequenceOrder: 'asc' }
+        },
+      },
+    })
+    if (!odc) return res.status(404).json({ error: 'ODC not found' })
+
+    // Fetch child ODCs that use this ODC as uplink
+    const downlinkOdcs = await prisma.odc.findMany({
+      where: { uplinkOdcId: req.params.id, uplinkCore: { not: null } },
+      select: { id: true, name: true, uplinkCore: true },
+    })
+
+    // Build cores array from downlink ODCs (cascade connections)
+    const cores = (downlinkOdcs || [])
+      .filter(child => child.uplinkCore)
+      .map(child => ({
+        coreNo: parseInt(child.uplinkCore),
+        usedBy: child.id,
+        usedByName: child.name,
+      }))
+    
+    // Calculate splitter-based metrics
+    const totalOutputs = calculateTotalOutputs(odc.splitters)
+    const usedOutputs = calculateUsedOutputs(odc.splitters)
+
+    res.json({
+      ...odc,
+      cores,
+      // New splitter-based metrics
+      totalOutputs,
+      usedOutputs,
+      availableOutputs: totalOutputs - usedOutputs,
+      // Legacy fields
+      capacity:  totalOutputs || ratioToCapacity(odc.splitterRatio),
+      available: (totalOutputs || ratioToCapacity(odc.splitterRatio) || 0) - usedOutputs,
+      odps: odc.odps.map(p => ({
+        ...p,
+        // Calculate ODP outputs from its splitters
+        totalOutputs: calculateTotalOutputs(p.splitters),
+        usedOutputs: calculateUsedOutputs(p.splitters),
+        // Legacy
+        capacity:  ratioToCapacity(p.splitterRatio) || calculateTotalOutputs(p.splitters) || 0,
+        available: (ratioToCapacity(p.splitterRatio) || calculateTotalOutputs(p.splitters) || 0) - p._count.customers,
+        customerCount: p._count.customers,
+      })),
+    })
+  } catch (e) { next(e) }
+})
+
+// ── POST /api/odc ─────────────────────────────────────────────────────────────
+router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  try {
+    const {
+      name, address, lat, lng,
+      uplinkType, oltId, ponPort,
+      uplinkOdcId, uplinkCore, uplinkPort,
+      feederLabel, feederCores, feederCore,
+      splitterRatio, passthrough, cablesOut,
+      mountType, brand, status, installDate, pic, notes, photos,
+      splitters, inputPower,
+    } = req.body
+
+    if (!name)          return res.status(400).json({ error: 'name required' })
+    if (!splitterRatio && (!splitters || splitters.length === 0)) {
+      return res.status(400).json({ error: 'splitterRatio or splitters required' })
+    }
+
+    // Use transaction to create ODC + splitters
+    const odc = await prisma.$transaction(async (tx) => {
+      // Create ODC
+      const newOdc = await tx.odc.create({
+        data: {
+          name, address,
+          lat: lat ? Number(lat) : null,
+          lng: lng ? Number(lng) : null,
+          uplinkType:   uplinkType || 'olt',
+          oltId:        oltId || null,
+          ponPort:      ponPort || null,
+          uplinkOdcId:  uplinkOdcId || null,
+          uplinkCore:   uplinkCore || null,
+          uplinkPort:   uplinkPort || null,
+          feederLabel, feederCores: feederCores ? Number(feederCores) : null,
+          feederCore,   splitterRatio: splitterRatio || (splitters?.[0]?.splitterTypeId ? `R1_${splitters[0].outputs || 8}` : 'R1_8'),
+          passthrough:  passthrough ? Number(passthrough) : null,
+          cablesOut:    cablesOut || null,
+          mountType,    brand,
+          status:       status ? status.toUpperCase() : 'ACTIVE',
+          installDate:  installDate ? new Date(installDate) : null,
+          pic, notes,   photos: photos || null,
+          inputPower:   inputPower !== null && inputPower !== undefined ? Number(inputPower) : null,
+        },
+        include: { olt: { select: { id: true, name: true, ip: true } } },
+      })
+
+      // Create splitters if provided
+      if (splitters && splitters.length > 0) {
+        // Pre-fetch all splitter types for lookup
+        const allTypes = await tx.splitterType.findMany()
+        
+        for (const splitter of splitters) {
+          // Get splitter type info - support both ID and code (e.g., "R1_8", "1:8")
+          let typeId = splitter.splitterTypeId || splitter.type?.id
+          if (!typeId) continue
+
+          // Try find by ID first, then by code
+          let splitterType = allTypes.find(t => t.id === typeId)
+          if (!splitterType) {
+            // Try find by code - convert R1_8 to 1:8 format
+            const codeMatch = typeId.match(/R1_(\d+)/)
+            const code = codeMatch ? `1:${codeMatch[1]}` : typeId
+            splitterType = allTypes.find(t => t.code === code)
+          }
+
+          if (!splitterType) continue
+          
+          // Use actual database ID
+          typeId = splitterType.id
+
+          // Create splitter instance
+          const newSplitter = await tx.splitterInstance.create({
+            data: {
+              parentType: 'ODC',
+              odcId: newOdc.id,
+              splitterTypeId: typeId,
+              sequenceOrder: splitter.sequenceOrder || 1,
+              position: splitter.position || 'Slot A',
+              portMappings: splitter.portMappings || [],
+              inputPower: splitter.inputPower !== null && splitter.inputPower !== undefined 
+                ? Number(splitter.inputPower) 
+                : null,
+            },
+            include: { splitterType: true }
+          })
+
+          // Create ports for this splitter
+          const outputCount = splitterType.outputCount || splitter.outputs || 8
+          const portData = []
+          for (let i = 1; i <= outputCount; i++) {
+            const mapping = (splitter.portMappings || []).find(p => p.portNum === i)
+            portData.push({
+              splitterInstanceId: newSplitter.id,
+              portNumber: i,
+              portLabel: `Port ${i}`,
+              portType: 'OUTPUT',
+              connectionStatus: mapping ? 'CONNECTED' : 'AVAILABLE',
+              connectedToType: mapping?.connectionType || null,
+              connectedToId: mapping?.assignedTo || null,
+              attenuation: splitterType.category === 'SYMMETRIC' 
+                ? splitterType.attEqual 
+                : (i === 1 ? splitterType.attLowOut : splitterType.attHighOut),
+            })
+          }
+
+          if (portData.length > 0) {
+            await tx.splitterPort.createMany({ data: portData })
+          }
+        }
+      }
+
+      // Return created ODC with splitters
+      return tx.odc.findUnique({
+        where: { id: newOdc.id },
+        include: {
+          olt: { select: { id: true, name: true, ip: true } },
+          splitters: {
+            include: {
+              splitterType: true,
+              ports: true,
+            },
+            orderBy: { sequenceOrder: 'asc' }
+          }
+        }
+      })
+    })
+
+    // Calculate capacity from splitters
+    const totalOutputs = calculateTotalOutputs(odc.splitters)
+    const usedOutputs = calculateUsedOutputs(odc.splitters)
+
+    res.status(201).json({ 
+      ...odc, 
+      capacity: totalOutputs || ratioToCapacity(odc.splitterRatio), 
+      available: (totalOutputs || ratioToCapacity(odc.splitterRatio)) - usedOutputs 
+    })
+  } catch (e) {
+    if (e.code === 'P2002') return res.status(409).json({ error: 'ODC name already exists' })
+    next(e)
+  }
+})
+
+// ── PATCH /api/odc/:id ────────────────────────────────────────────────────────
+router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  try {
+    const { splitters, inputPower, ...otherFields } = req.body
+    
+    const allowed = [
+      'name','address','lat','lng','oltId','ponPort',
+      'feederLabel','feederCores','feederCore',
+      'splitterRatio','passthrough','cablesOut',
+      'mountType','brand','status','installDate','pic','notes','photos',
+    ]
+    const data = {}
+    for (const k of allowed) {
+      if (otherFields[k] !== undefined) {
+        if (k === 'lat' || k === 'lng' || k === 'feederCores' || k === 'passthrough')
+          data[k] = otherFields[k] !== null ? Number(otherFields[k]) : null
+        else if (k === 'status') data[k] = otherFields[k].toUpperCase()
+        else if (k === 'installDate') data[k] = otherFields[k] ? new Date(otherFields[k]) : null
+        else data[k] = otherFields[k]
+      }
+    }
+    
+    // Handle inputPower
+    if (inputPower !== undefined) {
+      data.inputPower = inputPower !== null ? Number(inputPower) : null
+    }
+
+    // Use transaction for ODC update + splitters sync
+    const odc = await prisma.$transaction(async (tx) => {
+      // Update ODC basic fields
+      await tx.odc.update({
+        where: { id: req.params.id },
+        data,
+      })
+
+      // Handle splitters array if provided
+      if (splitters !== undefined) {
+        // Get existing splitters
+        const existingSplitters = await tx.splitterInstance.findMany({
+          where: { odcId: req.params.id },
+          include: { ports: true }
+        })
+
+        // Pre-fetch all splitter types for lookup
+        const allTypes = await tx.splitterType.findMany()
+        
+        // Helper to resolve splitter type
+        const resolveSplitterType = (typeId) => {
+          if (!typeId) return null
+          // Try find by ID first
+          let st = allTypes.find(t => t.id === typeId)
+          if (!st) {
+            // Try find by code - convert R1_8 to 1:8 format
+            const codeMatch = typeId.match(/R1_(\d+)/)
+            const code = codeMatch ? `1:${codeMatch[1]}` : typeId
+            st = allTypes.find(t => t.code === code)
+          }
+          return st
+        }
+        
+        // Split into new, update, delete
+        const newSplitters = splitters.filter(s => !s.id || s.id.startsWith('temp-') || s.id.startsWith('legacy-'))
+        const updateSplitters = splitters.filter(s => s.id && !s.id.startsWith('temp-') && !s.id.startsWith('legacy-'))
+        const updateIds = updateSplitters.map(s => s.id)
+        const deleteSplitters = existingSplitters.filter(s => !updateIds.includes(s.id))
+
+        // Delete removed splitters
+        for (const splitter of deleteSplitters) {
+          await tx.splitterInstance.delete({ where: { id: splitter.id } })
+        }
+
+        // Update existing splitters
+        for (const splitter of updateSplitters) {
+          const rawTypeId = splitter.splitterTypeId || splitter.type?.id
+          const splitterType = resolveSplitterType(rawTypeId)
+          if (!splitterType) continue
+          const typeId = splitterType.id
+
+          // Update splitter instance
+          await tx.splitterInstance.update({
+            where: { id: splitter.id },
+            data: {
+              splitterTypeId: typeId,
+              sequenceOrder: splitter.sequenceOrder || 1,
+              position: splitter.position || 'Slot A',
+              portMappings: splitter.portMappings || [],
+              inputPower: splitter.inputPower !== null && splitter.inputPower !== undefined 
+                ? Number(splitter.inputPower) 
+                : null,
+            }
+          })
+
+          // Delete old ports
+          await tx.splitterPort.deleteMany({ where: { splitterInstanceId: splitter.id } })
+
+          // Create new ports
+          const outputCount = splitterType.outputCount || splitter.outputs || 8
+          const portData = []
+          for (let i = 1; i <= outputCount; i++) {
+            const mapping = (splitter.portMappings || []).find(p => p.portNum === i)
+            portData.push({
+              splitterInstanceId: splitter.id,
+              portNumber: i,
+              portLabel: `Port ${i}`,
+              portType: 'OUTPUT',
+              connectionStatus: mapping ? 'CONNECTED' : 'AVAILABLE',
+              connectedToType: mapping?.connectionType || null,
+              connectedToId: mapping?.assignedTo || null,
+              attenuation: splitterType.category === 'SYMMETRIC' 
+                ? splitterType.attEqual 
+                : (i === 1 ? splitterType.attLowOut : splitterType.attHighOut),
+            })
+          }
+
+          if (portData.length > 0) {
+            await tx.splitterPort.createMany({ data: portData })
+          }
+        }
+
+        // Create new splitters
+        for (const splitter of newSplitters) {
+          const rawTypeId = splitter.splitterTypeId || splitter.type?.id
+          const splitterType = resolveSplitterType(rawTypeId)
+          if (!splitterType) continue
+          const typeId = splitterType.id
+
+          const newSplitter = await tx.splitterInstance.create({
+            data: {
+              parentType: 'ODC',
+              odcId: req.params.id,
+              splitterTypeId: typeId,
+              sequenceOrder: splitter.sequenceOrder || 1,
+              position: splitter.position || 'Slot A',
+              portMappings: splitter.portMappings || [],
+              inputPower: splitter.inputPower !== null && splitter.inputPower !== undefined 
+                ? Number(splitter.inputPower) 
+                : null,
+            }
+          })
+
+          // Create ports
+          const outputCount = splitterType.outputCount || splitter.outputs || 8
+          const portData = []
+          for (let i = 1; i <= outputCount; i++) {
+            const mapping = (splitter.portMappings || []).find(p => p.portNum === i)
+            portData.push({
+              splitterInstanceId: newSplitter.id,
+              portNumber: i,
+              portLabel: `Port ${i}`,
+              portType: 'OUTPUT',
+              connectionStatus: mapping ? 'CONNECTED' : 'AVAILABLE',
+              connectedToType: mapping?.connectionType || null,
+              connectedToId: mapping?.assignedTo || null,
+              attenuation: splitterType.category === 'SYMMETRIC' 
+                ? splitterType.attEqual 
+                : (i === 1 ? splitterType.attLowOut : splitterType.attHighOut),
+            })
+          }
+
+          if (portData.length > 0) {
+            await tx.splitterPort.createMany({ data: portData })
+          }
+        }
+      }
+
+      // Return updated ODC with splitters
+      return tx.odc.findUnique({
+        where: { id: req.params.id },
+        include: {
+          olt: { select: { id: true, name: true, ip: true } },
+          splitters: {
+            include: {
+              splitterType: true,
+              ports: true,
+            },
+            orderBy: { sequenceOrder: 'asc' }
+          }
+        }
+      })
+    })
+
+    // Calculate capacity from splitters
+    const totalOutputs = calculateTotalOutputs(odc.splitters)
+    const usedOutputs = calculateUsedOutputs(odc.splitters)
+
+    res.json({ 
+      ...odc, 
+      capacity: totalOutputs || ratioToCapacity(odc.splitterRatio), 
+      available: (totalOutputs || ratioToCapacity(odc.splitterRatio)) - usedOutputs 
+    })
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'ODC not found' })
+    if (e.code === 'P2002') return res.status(409).json({ error: 'ODC name already exists' })
+    next(e)
+  }
+})
+
+// ── DELETE /api/odc/:id ───────────────────────────────────────────────────────
+router.delete('/:id', requireRole('ADMIN'), async (req, res, next) => {
+  try {
+    await prisma.odc.delete({ where: { id: req.params.id } })
+    res.status(204).end()
+  } catch (e) {
+    if (e.code === 'P2025') return res.status(404).json({ error: 'ODC not found' })
+    next(e)
+  }
+})
+
+export default router

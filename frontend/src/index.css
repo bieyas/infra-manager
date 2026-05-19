@@ -1,0 +1,271 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary:     #f0f4ff;
+    --bg-secondary:   #dce4f5;
+    --bg-card:        #ffffff;
+    --bg-sidebar:     #f8faff;
+    --text-primary:   #0f172a;
+    --text-secondary: #475569;
+    --text-muted:     #94a3b8;
+    --border:         #e2e8f0;
+    --accent:         #00a3a5;
+    --accent-glow:    rgba(0, 163, 165, 0.15);
+  }
+
+  .dark {
+    --bg-primary:     #0a0e1a;
+    --bg-secondary:   #0d1117;
+    --bg-card:        #111827;
+    --bg-sidebar:     #090d14;
+    --text-primary:   #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted:     #4b5563;
+    --border:         #1e2a3a;
+    --accent:         #00cbca;
+    --accent-glow:    rgba(0, 203, 202, 0.12);
+  }
+
+  * {
+    @apply border-[var(--border)];
+  }
+
+  body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: 'Inter', system-ui, sans-serif;
+    @apply antialiased text-sm;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full;
+    background: var(--border);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--accent);
+  }
+}
+
+@layer components {
+  .card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    @apply rounded-xl;
+  }
+
+  .card-glow {
+    box-shadow: 0 0 0 1px var(--accent-glow), 0 4px 20px var(--accent-glow);
+    border-color: rgba(0, 203, 202, 0.25);
+  }
+
+  .text-primary   { color: var(--text-primary); }
+  .text-secondary { color: var(--text-secondary); }
+  .text-muted     { color: var(--text-muted); }
+
+  .sidebar-bg  { background-color: var(--bg-sidebar); }
+  .bg-card-var { background-color: var(--bg-card); }
+  .bg-primary-var { background-color: var(--bg-primary); }
+  .bg-secondary-var { background-color: var(--bg-secondary); }
+
+  .accent-text  { color: var(--accent); }
+  .accent-bg    { background-color: var(--accent); }
+  .border-var   { border-color: var(--border); }
+
+  .glow-ring {
+    box-shadow: 0 0 8px var(--accent-glow), 0 0 20px var(--accent-glow);
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 cursor-pointer select-none;
+    color: var(--text-secondary);
+  }
+  .nav-item:hover {
+    background-color: var(--accent-glow);
+    color: var(--text-primary);
+  }
+  .nav-item.active {
+    background-color: var(--accent-glow);
+    color: var(--accent);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  .stat-card {
+    @apply card p-4 flex flex-col gap-1 transition-all duration-200 cursor-default;
+  }
+  .stat-card:hover {
+    box-shadow: 0 0 0 1px var(--accent-glow), 0 4px 20px var(--accent-glow);
+    border-color: rgba(0, 203, 202, 0.25);
+  }
+
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  .hover-glow {
+    transition: box-shadow 0.2s, border-color 0.2s;
+  }
+  .hover-glow:hover {
+    box-shadow: 0 0 0 1px var(--accent-glow), 0 4px 20px var(--accent-glow);
+    border-color: rgba(0, 203, 202, 0.25);
+  }
+
+  /* Toast slide-in animation */
+  @keyframes slide-in {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  .animate-slide-in {
+    animation: slide-in 0.3s ease-out;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-fade-in {
+    animation: fade-in 0.2s ease-out;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   LEAFLET CUSTOM MARKER STYLES
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* Custom marker icon container */
+.custom-marker-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.custom-marker-icon svg {
+  display: block;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+/* Marker hover effect */
+.custom-marker-icon:hover svg {
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3));
+  transform: scale(1.1);
+  transition: all 0.2s ease;
+}
+
+/* Pulse animation for active/alert markers */
+@keyframes marker-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+}
+
+.marker-pulse {
+  animation: marker-pulse 1.5s ease-in-out infinite;
+}
+
+/* Leaflet popup customization - Natural width with max constraint */
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-width: 280px !important;  /* Max constraint, not fixed */
+  min-width: 200px !important;    /* Min untuk readability */
+}
+
+.leaflet-popup-content {
+  margin: 0;
+  padding: 0;
+  width: auto !important;        /* Natural width */
+}
+
+/* Remove default Leaflet popup tip margin adjustment */
+.leaflet-popup-scrolled {
+  overflow: visible;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   RANGE SLIDER THUMB — cross-browser
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid currentColor;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: transform 0.1s, box-shadow 0.1s;
+  margin-top: -5px;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(1.1);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  border: 2px solid currentColor;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--border);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   CABLE / POLYLINE STYLES
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* Cable tooltip customization */
+.cable-tooltip {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Selection highlight for cables */
+.leaflet-interactive.selected-cable {
+  filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.8));
+}

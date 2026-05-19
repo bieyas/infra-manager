@@ -1,0 +1,868 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(VIEWER)
+  permissions  Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+enum Role {
+  ADMIN
+  TECHNICIAN
+  VIEWER
+}
+
+// ── Network Devices ───────────────────────────────────────────────────────────
+
+model Device {
+  id            String        @id @default(cuid())
+  name          String
+  ip            String        @unique
+  type          DeviceType
+  vendor        String?
+  model         String?
+  location      String?
+  status        NodeStatus    @default(ACTIVE)
+  uptimeSeconds Int?
+  cpuPct        Float?
+  memPct        Float?
+  notes         String?
+
+  // ── Management access ──────────────────────────────────────────────────
+  mgmtProtocol  MgmtProtocol? // SSH, TELNET, SNMP, API, WEB
+  mgmtPort      Int?           // override default port (e.g. 8728 for API)
+  mgmtUsername  String?
+  mgmtPassword  String?        // stored AES-256-GCM encrypted by backend
+  snmpCommunity String?        // SNMP v1/v2c community string (encrypted)
+  snmpVersion   String?        // "v1" | "v2c" | "v3"
+
+  // ── OLT-specific ───────────────────────────────────────────────────────
+  ponCount      Int?           // number of PON ports (OLT only)
+  ponCapacity   Int?           // max ONUs per PON port (e.g. 128)
+
+  // ── Location coordinates ────────────────────────────────────────────────
+  lat           Float?         // latitude  (decimal degrees)
+  lng           Float?         // longitude (decimal degrees)
+
+  // ── Connectivity probing ─────────────────────────────────────────────────
+  lastSeen      DateTime?      // last time device responded to a probe
+  lastProbeAt   DateTime?      // last time a probe was attempted
+  probeLatency  Int?           // last probe RTT in milliseconds
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  interfaces    Interface[]
+  alerts        Alert[]
+  uplinks       DeviceLink[]   @relation("LinkUpstream")
+  downlinks     DeviceLink[]   @relation("LinkDownstream")
+  odcs          Odc[]          @relation("OdcOlt")
+  odps          Odp[]          @relation("OdpOlt")
+  ipamHosts     Host[]
+}
+
+// ── Physical/logical link between two device ports ────────────────────────
+model DeviceLink {
+  id             String   @id @default(cuid())
+  // "from" = downstream side (the device that is being configured)
+  fromDeviceId   String
+  fromDevice     Device   @relation("LinkUpstream",   fields: [fromDeviceId], references: [id], onDelete: Cascade)
+  fromPort       String   // e.g. "ether1", "PON1/0", "ge-0/0/0"
+  // "to" = upstream side (the parent/uplink device)
+  toDeviceId     String
+  toDevice       Device   @relation("LinkDownstream", fields: [toDeviceId],   references: [id], onDelete: Cascade)
+  toPort         String   // port on the upstream device
+  linkType       String?  // "fiber", "copper", "sfp", "uplink" — optional label
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([fromDeviceId, fromPort])   // one port can only have one uplink
+}
+
+model Interface {
+  id          String     @id @default(cuid())
+  deviceId    String
+  device      Device     @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  name        String
+  ifType      String?
+  vid         Int?
+  description String?
+  ipAddress   String?
+  macAddress  String?
+  speed       Int?
+  status      LinkStatus @default(UP)
+  inBps       BigInt?
+  outBps      BigInt?
+  vlanId      String?
+  vlan        Vlan?      @relation(fields: [vlanId], references: [id])
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@unique([deviceId, name])
+}
+
+enum DeviceType {
+  ROUTER
+  SWITCH
+  FIREWALL
+  AP
+  SERVER
+  OLT
+  ONU
+  OTHER
+}
+
+enum MgmtProtocol {
+  SSH
+  TELNET
+  SNMP
+  API
+  WEB
+}
+
+enum LinkStatus {
+  UP
+  DOWN
+  TESTING
+}
+
+// ── Alerts ────────────────────────────────────────────────────────────────────
+
+model Alert {
+  id         String      @id @default(cuid())
+  deviceId   String?
+  device     Device?     @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  severity   Severity
+  message    String
+  detail     String?
+  acked      Boolean     @default(false)
+  ackedAt    DateTime?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+}
+
+enum Severity {
+  CRITICAL
+  WARNING
+  INFO
+}
+
+// ── VLANs ─────────────────────────────────────────────────────────────────────
+
+model Vlan {
+  id          String      @id @default(cuid())
+  vid         Int         @unique
+  name        String
+  description String?
+  color       String?
+  status      NodeStatus  @default(ACTIVE)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  interfaces  Interface[]
+  subnets     Subnet[]
+  hosts       Host[] @relation("HostSVlan")
+}
+
+// ── IPAM ──────────────────────────────────────────────────────────────────────
+
+model Subnet {
+  id          String   @id @default(cuid())
+  cidr        String   @unique
+  description String?
+  vlanId      String?
+  vlan        Vlan?    @relation(fields: [vlanId], references: [id])
+  parentId    String?
+  parent      Subnet?  @relation("SubnetTree", fields: [parentId], references: [id])
+  children    Subnet[] @relation("SubnetTree")
+  
+  // IP Pool Management
+  poolStart   String?  // First usable IP (optional override)
+  poolEnd     String?  // Last usable IP (optional override)
+  gateway     String?  // Gateway IP
+  dnsPrimary  String?
+  dnsSecondary String?
+  
+  // Discovery & Monitoring
+  scanEnabled Boolean  @default(true)
+  lastScanned DateTime?
+  scanInterval Int     @default(60) // minutes
+  
+  // Organization
+  siteId      String?  // For multi-site
+  rackId      String?
+  
+  status      NodeStatus @default(ACTIVE)
+  notes       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  hosts       Host[]
+  auditLogs   AuditLog[] @relation("SubnetAudit")
+  
+  @@index([parentId])
+  @@index([vlanId])
+  @@index([siteId])
+}
+
+model Host {
+  id          String   @id @default(cuid())
+  ip          String   @unique
+  hostname    String?
+  mac         String?
+  fqdn        String?  // Fully qualified domain name
+  
+  subnetId    String
+  subnet      Subnet   @relation(fields: [subnetId], references: [id], onDelete: Cascade)
+  
+  // VLAN Tagging
+  vlanId      String?  // S-VLAN override
+  vlan        Vlan?    @relation("HostSVlan", fields: [vlanId], references: [id])
+  cvid        Int?     // C-VLAN for QnQ
+  
+  // Discovery & Monitoring
+  discovered      Boolean  @default(false)
+  discoveryMethod String?  // ping, snmp, arp, dhcp, manual
+  lastSeen        DateTime?
+  responseTime    Int?     // ms
+  
+  // Assignment & Ownership
+  assignmentType  String   @default("static") // static, dhcp, reserved, infra, customer
+  assignedTo      String?  // Customer/user name
+  assignedToId    String?  // Customer/user ID
+  expiresAt       DateTime?
+  
+  // Device Binding
+  deviceId        String?
+  device          Device?  @relation(fields: [deviceId], references: [id])
+  interfaceId     String?
+  
+  // Metadata
+  os              String?
+  vendor          String?
+  model           String?
+  serialNumber    String?
+  
+  status          NodeStatus @default(ACTIVE)
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  
+  auditLogs       AuditLog[] @relation("HostAudit")
+  
+  @@index([subnetId])
+  @@index([vlanId])
+  @@index([mac])
+  @@index([deviceId])
+  @@index([assignedToId])
+}
+
+// ── IPAM Audit Log ────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // CREATE, UPDATE, DELETE, SCAN, DISCOVER, ASSIGN, RELEASE, RESERVE
+  entityType  String   // SUBNET, HOST, VLAN, POOL
+  entityId    String
+  
+  // Changes
+  oldValues   Json?
+  newValues   Json?
+  diff        Json?    // Computed diff
+  
+  // Actor
+  userId      String
+  userEmail   String?
+  userName    String?
+  
+  // Context
+  ipAddress   String?  // Client IP
+  userAgent   String?
+  
+  // Related
+  subnetId    String?
+  subnet      Subnet?  @relation("SubnetAudit", fields: [subnetId], references: [id])
+  hostId      String?
+  host        Host?    @relation("HostAudit", fields: [hostId], references: [id])
+  
+  notes       String?
+  createdAt   DateTime @default(now())
+  
+  @@index([entityId])
+  @@index([entityType])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([action])
+}
+
+// ── FTTH ──────────────────────────────────────────────────────────────────────
+
+// Legacy generic node (map markers / closure / HTB)
+model FtthNode {
+  id           String       @id
+  name         String
+  type         FtthType
+  parentId     String?
+  parent       FtthNode?    @relation("FtthTree", fields: [parentId], references: [id])
+  children     FtthNode[]   @relation("FtthTree")
+  lat          Float
+  lng          Float
+  address      String?
+  status       NodeStatus   @default(ACTIVE)
+  brand        String?
+  model        String?
+  installDate  DateTime?
+  notes        String?
+  cableCore    Int?
+  mountType    String?
+  capacity     Int?
+  used         Int?
+  coreNo       Int?
+  customerName String?
+  customerId   String?
+  serialNo     String?
+  cores        Json?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+enum FtthType {
+  ODC
+  ODP
+  CLOSURE
+  HTB
+}
+
+// ── ODC (Optical Distribution Cabinet) ───────────────────────────────────────
+// First-level splitter box, fed from OLT PON port via feeder cable.
+// One ODC can fan out to many ODPs.
+
+model Odc {
+  id           String     @id @default(cuid())
+  name         String     @unique        // e.g. "ODC-RUNGKUT-01"
+  address      String?
+  lat          Float?
+  lng          Float?
+
+  // ── Upstream type: 'olt' or 'odc' ───────────────────────────────────────
+  uplinkType   String     @default("olt") // "olt" | "odc"
+
+  // ── Upstream from OLT ───────────────────────────────────────────────────
+  oltId        String?                   // FK → Device (type=OLT)
+  olt          Device?    @relation("OdcOlt", fields: [oltId], references: [id], onDelete: SetNull)
+  ponPort      String?                   // e.g. "PON1"
+
+  // ── Upstream from another ODC (cascade) ─────────────────────────────────
+  uplinkOdcId  String?                   // FK → Odc (self-relation)
+  uplinkOdc    Odc?       @relation("OdcCascade", fields: [uplinkOdcId], references: [id], onDelete: SetNull)
+  uplinkCore   String?                   // core used from upstream ODC
+  uplinkPort   String?                   // port from upstream ODC (format: "splitterId-portNumber")
+
+  // ── Downstream ODCs (reverse relation) ────────────────────────────────────
+  downlinkOdcs Odc[]      @relation("OdcCascade")
+
+  // ── Feeder cable (kabel masuk dari OLT/backbone) ─────────────────────────
+  feederLabel  String?                   // cable name / label
+  feederCores  Int?                      // total cores in feeder cable
+  feederCore   String?                   // which core used (e.g. "core-4 (biru)")
+
+  // ── Splitter System (NEW) ────────────────────────────────────────────────
+  splitters     SplitterInstance[]       @relation("OdcSplitters")
+  inputPower    Float?                   // dBm - measured/calculated input power
+  calculatedAt  DateTime?                // Last power calculation timestamp
+  
+  // ── Legacy fields (to be migrated) ───────────────────────────────────────
+  splitterRatio String?                  // OLD: "R1_2", "R1_4", etc - to be removed
+  usedPorts     Int        @default(0)   // OLD: auto-computed - replaced by SplitterPort count
+  passthrough   Int?                     // cores passed through without splitting
+
+  // ── Distribution cables out ───────────────────────────────────────────────
+  // Stored as JSON array: [{ label, coreCount, targetOdpId?, color }]
+  cablesOut     Json?
+
+  // ── Physical info ─────────────────────────────────────────────────────────
+  mountType    String?                   // "pole" | "wall" | "underground" | "aerial"
+  brand        String?
+  status       NodeStatus @default(ACTIVE)
+  installDate  DateTime?
+  pic          String?                   // technician in charge
+  notes        String?
+  photos       Json?                     // [{ url, caption }]
+
+  odps          Odp[]           @relation("OdpOdc")
+  coverageZones CoverageZone[]  @relation("OdcCoverageZones")
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+// ── ODP (Optical Distribution Point) ─────────────────────────────────────────
+// Second-level (or further) splitter box, fed from ODC or another ODP.
+// Directly serves end-user ONUs.
+
+model Odp {
+  id           String     @id @default(cuid())
+  name         String     @unique        // e.g. "ODP-RUNGKUT-01-A"
+  address      String?
+  lat          Float?
+  lng          Float?
+
+  // ── Upstream type: 'odc' or 'odp' ───────────────────────────────────────
+  uplinkType   String     @default("odc") // "odc" | "odp"
+
+  // ── Upstream from ODC ───────────────────────────────────────────────────
+  odcId        String?
+  odc          Odc?       @relation("OdpOdc", fields: [odcId], references: [id], onDelete: SetNull)
+
+  // ── Upstream from another ODP (cascade) ─────────────────────────────────
+  uplinkOdpId  String?
+  uplinkOdp    Odp?       @relation("OdpCascade", fields: [uplinkOdpId], references: [id], onDelete: SetNull)
+  uplinkOdpCore String?                   // core used from upstream ODP
+
+  // ── Downstream ODPs (reverse relation) ────────────────────────────────────
+  downlinkOdps Odp[]      @relation("OdpCascade")
+
+  // ── Cascade upstream OLT/PON (denormalized for fast query) ───────────────
+  oltId        String?
+  olt          Device?    @relation("OdpOlt", fields: [oltId], references: [id], onDelete: SetNull)
+  ponPort      String?
+
+  // ── Uplink port (format: "splitterId-portNumber") ────────────────────────
+  uplinkPort   String?                   // port from upstream ODC/ODP splitter
+
+  // ── Feeder cable (masuk dari ODC/ODP upstream) ────────────────────────────
+  feederLabel  String?
+  feederCores  Int?                      // total cores in feeder cable
+  feederCore   String?                   // core used from feeder
+  feederPass   String?                   // cores passing through to next ODP
+  fiberLength  Float?                    // meters - cable length from upstream
+
+  // ── Splitter System (NEW) ────────────────────────────────────────────────
+  splitters     SplitterInstance[]       @relation("OdpSplitters")
+  inputPower    Float?                   // dBm - measured/calculated input power
+  calculatedAt  DateTime?                // Last power calculation timestamp
+  
+  // ── Legacy fields (to be migrated) ───────────────────────────────────────
+  splitterRatio String?                  // OLD: "R1_2", "R1_4", etc - to be removed
+  usedPorts     Int        @default(0)   // OLD: auto-computed - replaced by SplitterPort count
+
+  // ── Physical info ─────────────────────────────────────────────────────────
+  mountType    String?                   // "pole" | "wall" | "aerial" | "pedestal"
+  brand        String?
+  status       NodeStatus @default(ACTIVE)
+  installDate  DateTime?
+  pic          String?
+  notes        String?
+  photos       Json?                     // [{ url, caption }]
+
+  customers    Customer[]
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+// ── Customer (ONU endpoint) ───────────────────────────────────────────────────
+
+model Customer {
+  id              String     @id @default(cuid())
+  customerId      String     @unique        // internal customer number / ID pelanggan
+  name            String
+  phone           String?                   // nomor telepon / HP pelanggan
+  address         String?
+  lat             Float?
+  lng             Float?
+
+  // ── ODP connection ────────────────────────────────────────────────────────
+  odpId           String?
+  odp             Odp?       @relation(fields: [odpId], references: [id], onDelete: SetNull)
+  odpPort         Int?                      // port number on ODP splitter (1-based) - LEGACY
+  
+  // ── NEW: Splitter Port connection ──────────────────────────────────────────
+  splitterPortId  String?                   // Connect to specific SplitterPort
+  splitterPort    SplitterPort?  @relation(fields: [splitterPortId], references: [id])
+
+  // ── ONU device ───────────────────────────────────────────────────────────
+  onuSn           String?    @unique        // ONU serial number (from OLT)
+  onuIndex        String?                   // OLT index e.g. "1/1/1:5"
+  rxPower         Float?                    // last known RX power (dBm) from OLT
+  txPower         Float?                    // last known TX power (dBm) from OLT
+  onuLastSeen     DateTime?
+
+  // ── Service ───────────────────────────────────────────────────────────────
+  packageName     String?                   // e.g. "Paket 20 Mbps"
+  packageSpeed    Int?                      // Mbps
+  vlan            Int?
+  ipAddress       String?
+  pppoeUsername   String?
+
+  // ── Installer ─────────────────────────────────────────────────────────────
+  installerName   String?                   // technician name
+  installDate     DateTime?
+  contractExpiry  DateTime?
+  serviceStatus   ServiceStatus @default(ACTIVE)
+  notes           String?
+
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
+
+enum SplitterRatio {
+  R1_2   // 1:2
+  R1_4   // 1:4
+  R1_8   // 1:8
+  R1_16  // 1:16
+  R1_32  // 1:32
+}
+
+enum ServiceStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum NodeStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEW: Multi-Splitter System with Power Budget
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum SplitterCategory {
+  SYMMETRIC      // PLC - Passive Lightwave Circuit
+  ASYMMETRIC     // FBT - Fused Biconical Taper
+}
+
+enum PortType {
+  OUTPUT
+  DROP
+  PASS_THROUGH
+}
+
+enum ConnectionStatus {
+  AVAILABLE
+  CONNECTED
+  RESERVED
+  FAULTY
+}
+
+// Splitter Type Lookup (defines attenuation values)
+model SplitterType {
+  id                String    @id @default(cuid())
+  code              String    @unique    // "1:32", "10:90"
+  name              String
+  category          SplitterCategory
+  
+  inputCount        Int       @default(1)
+  outputCount       Int
+  
+  // Attenuation values (dB)
+  attLowOut         Float?    // For asymmetric - drop port
+  attHighOut        Float?    // For asymmetric - pass-through
+  attEqual          Float?    // For symmetric - all ports
+  
+  maxInsertionLoss  Float?
+  uniformity        Float?
+  
+  description       String?
+  isActive          Boolean   @default(true)
+  
+  instances         SplitterInstance[]
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// Splitter Instance (actual splitter in ODC/ODP)
+model SplitterInstance {
+  id              String    @id @default(cuid())
+  
+  parentType      String              // "ODC" | "ODP"
+  odcId           String?
+  odc             Odc?      @relation("OdcSplitters", fields: [odcId], references: [id], onDelete: Cascade)
+  odpId           String?
+  odp             Odp?      @relation("OdpSplitters", fields: [odpId], references: [id], onDelete: Cascade)
+  
+  splitterTypeId  String
+  splitterType    SplitterType @relation(fields: [splitterTypeId], references: [id])
+  
+  sequenceOrder   Int         @default(0)
+  position        String?
+  portMappings    Json?
+  
+  // Power
+  inputPower      Float?
+  
+  // Relations
+  ports           SplitterPort[]
+  inputConnection SplitterConnection? @relation("InputConnection")
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([odcId])
+  @@index([odpId])
+  @@index([splitterTypeId])
+}
+
+// Splitter Port Detail
+model SplitterPort {
+  id                String    @id @default(cuid())
+  
+  splitterInstanceId String
+  splitterInstance   SplitterInstance @relation(fields: [splitterInstanceId], references: [id], onDelete: Cascade)
+  
+  portNumber        Int
+  portLabel         String?
+  portType          PortType   @default(OUTPUT)
+  
+  // Power budget
+  inputPower        Float?
+  outputPower       Float?
+  attenuation       Float?
+  
+  // Connection
+  connectedToType   String?   // "ODP" | "ODC" | "CUSTOMER" | "SPLITTER"
+  connectedToId     String?
+  connectionStatus  ConnectionStatus @default(AVAILABLE)
+  
+  // Fiber info
+  fiberLength       Float?    // meters
+  fiberLoss         Float?    // dB
+  
+  calculatedRxPower Float?    // dBm at end of fiber
+  
+  // For cascade
+  outputConnection  SplitterConnection? @relation("OutputConnection")
+  
+  // Connected customers (should be max 1, but using array for Prisma requirement)
+  customers         Customer[]
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  
+  @@unique([splitterInstanceId, portNumber])
+  @@index([connectedToId])
+}
+
+// Connection between splitters (cascade)
+model SplitterConnection {
+  id              String    @id @default(cuid())
+  
+  fromPortId      String    @unique
+  fromPort        SplitterPort @relation("OutputConnection", fields: [fromPortId], references: [id], onDelete: Cascade)
+  
+  toSplitterId    String    @unique
+  toSplitter      SplitterInstance @relation("InputConnection", fields: [toSplitterId], references: [id], onDelete: Cascade)
+  
+  fiberLength     Float?    // meters
+  fiberLoss       Float?    // dB calculated
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Fiber Link between nodes (ODC↔ODC, ODC↔ODP, ODP↔ODP)
+model FiberLink {
+  id              String    @id @default(cuid())
+  
+  // Source
+  fromType        String    // "ODC" | "ODP"
+  fromId          String
+  fromPort        Int?      // Optional port reference
+  
+  // Destination
+  toType          String    // "ODC" | "ODP"
+  toId            String
+  toPort          Int?      // Optional port reference
+  
+  // Fiber specs
+  fiberType       String    @default("SMF-28") // Single Mode Fiber
+  length          Float     // meters
+  coreCount       Int       @default(1)
+  
+  // Calculated loss
+  calculatedLoss  Float?    // dB = length * 0.35 + connectors
+  measuredLoss    Float?    // dB - actual OTDR measurement
+  
+  // Physical info
+  cableLabel      String?
+  route           String?   // Description of physical route
+  
+  // Status
+  status          String    @default("ACTIVE")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([fromId])
+  @@index([toId])
+}
+
+// Power Measurement Records
+model PowerReading {
+  id              String    @id @default(cuid())
+  
+  nodeType        String    // "ODC" | "ODP" | "CUSTOMER"
+  nodeId          String
+  
+  pointType       String    // "INPUT" | "SPLITTER_INPUT" | "SPLITTER_OUTPUT" | "CUSTOMER_RX"
+  splitterPortId  String?
+  
+  measuredPower   Float     // dBm
+  referencePower  Float?    // dBm - expected/target
+  deviation       Float?    // dB
+  
+  measuredBy      String?
+  measuredAt      DateTime  @default(now())
+  notes           String?
+  photoUrl        String?
+  
+  otdrBrand       String?
+  otdrModel       String?
+  wavelength      Int       @default(1490)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([nodeId])
+  @@index([measuredAt])
+}
+
+// Cascade Change Log for OLT/PON updates
+model CascadeChangeLog {
+  id            String    @id @default(cuid())
+  
+  entityId      String    // ODC yang di-update
+  entityName    String    // Nama ODC
+  cascadeLevel  Int       // Level depth (1 = direct child, 2 = grandchild, etc.)
+  
+  oldOltId      String?
+  oldPonPort    String?
+  newOltId      String?
+  newPonPort    String?
+  
+  changedBy     String?   // User yang trigger cascade
+  changedByName String?
+  reason        String?
+  
+  createdAt     DateTime  @default(now())
+  
+  @@index([entityId])
+  @@index([createdAt])
+  @@index([cascadeLevel])
+}
+
+// What-If Calculation Cache
+model WhatIfScenario {
+  id              String    @id @default(cuid())
+  
+  name            String
+  description     String?
+  
+  // Base configuration
+  baseOltId       String?
+  baseInputPower  Float     // dBm
+  
+  // Scenario configuration (JSON array of splitters)
+  scenarioConfig  Json
+  
+  // Results
+  expectedRxPower Float?
+  worstCaseRxPower Float?
+  isFeasible      Boolean?
+  
+  createdBy       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Port Change Log
+model PortChangeLog {
+  id              String    @id @default(cuid())
+  
+  // Entity being changed
+  entityType      String    // 'ODC' | 'ODP'
+  entityId        String
+  
+  // Port information
+  oldPortInfo     Json?     // { splitterId, portNumber, odcName/odpName }
+  newPortInfo     Json?     // { splitterId, portNumber, odcName/odpName }
+  
+  // Change details
+  changeType      String    // 'CREATE' | 'UPDATE' | 'DELETE'
+  reason          String?
+  
+  // User context
+  changedBy       String    // User ID who made the change
+  changedByName   String?   // User name
+  
+  // Timestamps
+  createdAt       DateTime  @default(now())
+  
+  @@index([entityType, entityId])
+  @@index([changedBy])
+  @@index([createdAt])
+}
+
+// ── Coverage Zone ──────────────────────────────────────────────────────────────
+// Polygon area coverage yang digambar manual oleh admin di peta FTTH.
+// Bisa di-attach ke ODC tertentu (odcId) atau berdiri sendiri (zona kelurahan dll).
+
+model CoverageZone {
+  id          String    @id @default(cuid())
+  name        String                          // e.g. "Coverage ODC-RUNGKUT-01"
+  description String?
+
+  // GeoJSON polygon coordinates — disimpan sebagai JSON array [[lng,lat],...]
+  // Format: array of rings, ring[0] = outer boundary, ring[1..] = holes
+  coordinates Json                            // GeoJSON coordinates (Polygon rings)
+
+  // Opsional: attach ke ODC tertentu
+  odcId       String?
+  odc         Odc?      @relation("OdcCoverageZones", fields: [odcId], references: [id], onDelete: SetNull)
+
+  // Visual styling
+  color       String    @default("#06b6d4")   // hex color
+  opacity     Float     @default(0.2)
+  label       String?                         // label text di tengah polygon
+
+  // Metadata
+  areaM2      Float?                          // luas area dalam m² (hitung di backend)
+  createdBy   String?
+  isActive    Boolean   @default(true)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([odcId])
+  @@index([isActive])
+}
