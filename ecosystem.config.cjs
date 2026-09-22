@@ -1,0 +1,40 @@
+module.exports = {
+  apps: [
+    {
+      name: 'infra-backend',
+      script: 'src/index.js',
+      cwd: '/home/basuki/infra-manager/backend',
+      interpreter: 'node',
+      interpreter_args: '--experimental-vm-modules',
+      env: {
+        NODE_ENV: 'production',
+      },
+      watch: false,
+      max_memory_restart: '512M',
+      restart_delay: 2000,
+      max_restarts: 10,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      error_file: '/home/basuki/infra-manager/logs/backend-error.log',
+      out_file: '/home/basuki/infra-manager/logs/backend-out.log',
+      merge_logs: true,
+    },
+    {
+      name: 'infra-frontend',
+      script: 'node_modules/.bin/vite',
+      args: '--host 0.0.0.0 --port 6001',
+      cwd: '/home/basuki/infra-manager/frontend',
+      interpreter: 'none',
+      env: {
+        NODE_ENV: 'development',
+      },
+      watch: false,
+      max_memory_restart: '512M',
+      restart_delay: 2000,
+      max_restarts: 10,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      error_file: '/home/basuki/infra-manager/logs/frontend-error.log',
+      out_file: '/home/basuki/infra-manager/logs/frontend-out.log',
+      merge_logs: true,
+    },
+  ],
+}

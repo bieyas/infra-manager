@@ -1,0 +1,103 @@
+// Extended IPAM Schema
+
+model Subnet {
+  id          String   @id @default(cuid())
+  cidr        String   @unique
+  description String?
+  vlanId      String?
+  vlan        Vlan?    @relation(fields: [vlanId], references: [id])
+  parentId    String?
+  parent      Subnet?  @relation("SubnetHierarchy", fields: [parentId], references: [id])
+  children    Subnet[] @relation("SubnetHierarchy")
+  
+  // IP Pool ranges
+  poolStart   String?  // First usable IP
+  poolEnd     String?  // Last usable IP
+  gateway     String?  // Gateway IP
+  
+  // Scan settings
+  lastScanned DateTime?
+  scanEnabled Boolean   @default(false)
+  
+  status      NodeStatus @default(ACTIVE)
+  notes       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  hosts       Host[]
+  auditLogs   AuditLog[]
+  
+  @@index([parentId])
+  @@index([vlanId])
+}
+
+model Host {
+  id          String   @id @default(cuid())
+  ip          String   @unique
+  hostname    String?
+  mac         String?
+  
+  subnetId    String
+  subnet      Subnet   @relation(fields: [subnetId], references: [id], onDelete: Cascade)
+  
+  // VLAN tagging
+  vlanId      String?  // S-VLAN override
+  vlan        Vlan?    @relation("HostSVlan", fields: [vlanId], references: [id])
+  cvid        Int?     // C-VLAN for QnQ
+  
+  // Discovery
+  discovered  Boolean  @default(false)
+  lastSeen    DateTime?
+  discoveryMethod String? // ping, snmp, dhcp, manual
+  
+  // Assignment
+  assignedTo  String?  // User/customer name
+  assignmentType String? // static, dhcp, reserved, infra
+  expiresAt   DateTime?
+  
+  status      NodeStatus @default(ACTIVE)
+  notes       String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  auditLogs   AuditLog[]
+  
+  @@index([subnetId])
+  @@index([vlanId])
+  @@index([mac])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // CREATE, UPDATE, DELETE, SCAN, ASSIGN
+  entity      String   // SUBNET, HOST
+  entityId    String
+  
+  // Old and new values (JSON)
+  oldValues   Json?
+  newValues   Json?
+  
+  // Who did it
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  // Related entities
+  subnetId    String?
+  subnet      Subnet?  @relation(fields: [subnetId], references: [id])
+  hostId      String?
+  host        Host?    @relation(fields: [hostId], references: [id])
+  
+  ipAddress   String?  // IP yang terlibat
+  notes       String?
+  createdAt   DateTime @default(now())
+  
+  @@index([entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// Extend existing Vlan model
+model Vlan {
+  // ... existing fields ...
+  hosts       Host[]   @relation("HostSVlan")
+}
