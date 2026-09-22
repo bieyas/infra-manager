@@ -1,17 +1,17 @@
 import React from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
-import { Map, Box, Cable, UserRound, QrCode } from 'lucide-react'
+import { LayoutDashboard, Map, Cable, UserRound, QrCode } from 'lucide-react'
 import clsx from 'clsx'
 import { useAuth } from '../../context/AuthContext'
 import { hasFeatureAccess, NAV_PERMISSION_MAP } from '../../lib/permissions'
 
 const LEFT_NAV  = [
-  { label: 'Peta FTTH', to: '/ftth',      icon: Map },
-  { label: 'ODC',       to: '/odc',       icon: Box },
+  { label: 'Dashboard', to: '/',          icon: LayoutDashboard },
+  { label: 'Pelanggan', to: '/customers', icon: UserRound },
 ]
 const RIGHT_NAV = [
   { label: 'ODP',       to: '/odp',       icon: Cable },
-  { label: 'Pelanggan', to: '/customers', icon: UserRound },
+  { label: 'Map',       to: '/ftth',      icon: Map },
 ]
 
 function NavItem({ label, to, icon: Icon }) {

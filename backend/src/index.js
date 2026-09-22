@@ -20,7 +20,6 @@ import coverageZonesRouter from './routes/coverage-zones.js'
 import usersRouter     from './routes/users.js'
 import toolsRouter     from './routes/tools.js'
 import qrRouter        from './routes/qr.js'
-import etlRouter       from './routes/etl.js'
 import customerRouter   from './routes/customers.js'
 import dashboardRouter  from './routes/dashboard.js'
 
@@ -35,7 +34,9 @@ const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
   'http://localhost:6001',
   'http://127.0.0.1:6001',
-  'http://160.22.31.215:6001',
+  'http://10.17.33.9:6001',
+  'https://infra.fastkho.online',
+  'http://bondongoyot.ddns.net:6001',
 ].filter(Boolean)
 
 app.use(helmet())
@@ -71,7 +72,6 @@ app.use('/api/coverage-zones', coverageZonesRouter)
 app.use('/api/users',         usersRouter)
 app.use('/api/tools',         toolsRouter)
 app.use('/api/qr',            qrRouter)      // public — no auth, QR scan redirect
-app.use('/api/etl',           etlRouter)
 app.use('/api/customers',     customerRouter)
 app.use('/api/dashboard',     dashboardRouter)
 

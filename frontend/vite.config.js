@@ -6,6 +6,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 6001,
+    allowedHosts: ['bondongoyot.ddns.net'],
     proxy: {
       '/api': {
         target: 'http://localhost:6000',

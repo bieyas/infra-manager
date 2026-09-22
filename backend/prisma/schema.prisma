@@ -73,6 +73,9 @@ model Device {
   lastSeen      DateTime?      // last time device responded to a probe
   lastProbeAt   DateTime?      // last time a probe was attempted
   probeLatency  Int?           // last probe RTT in milliseconds
+  customerSyncAt     DateTime?
+  customerSyncStatus String?
+  customerSyncError  String?
 
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -84,6 +87,8 @@ model Device {
   odcs          Odc[]          @relation("OdcOlt")
   odps          Odp[]          @relation("OdpOlt")
   ipamHosts     Host[]
+  pppoeSessions PppoeSession[]
+  sourcedCustomers Customer[] @relation("CustomerSourceDevice")
 }
 
 // ── Physical/logical link between two device ports ────────────────────────
@@ -489,6 +494,29 @@ model Odp {
 
 // ── Customer (ONU endpoint) ───────────────────────────────────────────────────
 
+model PppoeSession {
+  id            String   @id @default(cuid())
+  deviceId      String
+  device        Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  username      String
+  sessionId     String?
+  service       String?
+  ipAddress     String?
+  callerId      String?
+  uptime        String?
+  profile       String?
+  rateLimit     String?
+  comment       String?
+  isActive      Boolean  @default(true)
+  firstSeenAt   DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+  lastCheckedAt DateTime @default(now())
+
+  @@unique([deviceId, username])
+  @@index([username])
+  @@index([deviceId, isActive])
+}
+
 model Customer {
   id              String     @id @default(cuid())
   customerId      String     @unique        // internal customer number / ID pelanggan
@@ -520,6 +548,12 @@ model Customer {
   vlan            Int?
   ipAddress       String?
   pppoeUsername   String?
+  pppoePassword   String?                  // imported from MikroTik PPP secret (plain text)
+  connectionStatus CustomerConnectionStatus @default(UNKNOWN)
+  connectionSourceDeviceId String?
+  sourceDevice    Device?  @relation("CustomerSourceDevice", fields: [connectionSourceDeviceId], references: [id], onDelete: SetNull)
+  connectionLastSeen DateTime?
+  connectionLastChecked DateTime?
 
   // ── Installer ─────────────────────────────────────────────────────────────
   installerName   String?                   // technician name
@@ -530,6 +564,8 @@ model Customer {
 
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
+
+  @@index([connectionSourceDeviceId, pppoeUsername])
 }
 
 enum SplitterRatio {
@@ -544,6 +580,12 @@ enum ServiceStatus {
   ACTIVE
   SUSPENDED
   TERMINATED
+}
+
+enum CustomerConnectionStatus {
+  ONLINE
+  OFFLINE
+  UNKNOWN
 }
 
 enum NodeStatus {

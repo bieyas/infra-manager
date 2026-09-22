@@ -1,6 +1,8 @@
 import { Router } from 'express'
 import prisma from '../lib/prisma.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
+import { triggerCustomerSync } from '../lib/customerSync.js'
+import { createRemoteSession, closeRemoteSession, getRemoteSession } from '../lib/remoteProxy.js'
 
 const router = Router()
 router.use(authenticate)
@@ -76,12 +78,14 @@ async function releaseSplitterPort(splitterPortId, customerId, tx = prisma) {
 
 router.get('/', async (req, res, next) => {
   try {
-    const { q, status, odpId, odcId, page = '1', limit = '50' } = req.query
+    await triggerCustomerSync()
+    const { q, status, connectionStatus, odpId, odcId, page = '1', limit = '50' } = req.query
     const take = Math.min(parseInt(limit) || 50, 200)
     const skip = (Math.max(parseInt(page) || 1, 1) - 1) * take
 
     const where = {}
     if (status) where.serviceStatus = status.toUpperCase()
+    if (connectionStatus) where.connectionStatus = connectionStatus.toUpperCase()
     if (odpId)  where.odpId = odpId
     if (odcId)  where.odp = { odcId }
     if (q) {
@@ -100,6 +104,7 @@ router.get('/', async (req, res, next) => {
         where,
         include: {
           odp: { select: { id: true, name: true, odcId: true, odc: { select: { id: true, name: true } } } },
+          sourceDevice: { select: { id: true, name: true } },
         },
         orderBy: { name: 'asc' },
         take,
@@ -115,16 +120,44 @@ router.get('/', async (req, res, next) => {
 
 router.get('/stats', async (req, res, next) => {
   try {
+    await triggerCustomerSync()
     const groups = await prisma.customer.groupBy({
       by: ['serviceStatus'],
       _count: { _all: true },
     })
-    const stats = { ACTIVE: 0, SUSPENDED: 0, TERMINATED: 0, total: 0 }
+    const stats = { ACTIVE: 0, SUSPENDED: 0, TERMINATED: 0, ONLINE: 0, OFFLINE: 0, UNKNOWN: 0, total: 0 }
     groups.forEach(g => {
       stats[g.serviceStatus] = g._count._all
       stats.total += g._count._all
     })
-    res.json(stats)
+    const connectionGroups = await prisma.customer.groupBy({
+      by: ['connectionStatus'],
+      _count: { _all: true },
+    })
+    connectionGroups.forEach(g => { stats[g.connectionStatus] = g._count._all })
+    const [activeOnline, activeOffline] = await Promise.all([
+      prisma.customer.count({ where: { serviceStatus: 'ACTIVE', connectionStatus: 'ONLINE' } }),
+      prisma.customer.count({ where: { serviceStatus: 'ACTIVE', connectionStatus: 'OFFLINE' } }),
+    ])
+    stats.ONLINE = activeOnline
+    stats.OFFLINE = activeOffline
+    const syncDevices = await prisma.device.findMany({
+      where: { type: 'ROUTER', vendor: { not: null } },
+      select: { id: true, name: true, vendor: true, customerSyncAt: true, customerSyncStatus: true, customerSyncError: true },
+    })
+    res.json({
+      ...stats,
+      customerSync: syncDevices
+        .filter(device => /mikrotik|routeros/i.test(device.vendor || ''))
+        .map(({ id, name, vendor, customerSyncAt, customerSyncStatus, customerSyncError }) => ({
+          deviceId: id,
+          deviceName: name,
+          vendor,
+          lastSyncAt: customerSyncAt,
+          status: customerSyncStatus || 'PENDING',
+          error: customerSyncError,
+        })),
+    })
   } catch (e) { next(e) }
 })
 
@@ -155,6 +188,46 @@ router.get('/:id', async (req, res, next) => {
   } catch (e) { next(e) }
 })
 
+// ── Temporary remote ONU access ──────────────────────────────────────────────
+
+router.post('/:id/remote-session', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  try {
+    const customer = await prisma.customer.findUnique({
+      where: { id: req.params.id },
+      select: { ipAddress: true },
+    })
+    if (!customer) return res.status(404).json({ error: 'Customer not found' })
+    if (!customer.ipAddress) return res.status(422).json({ error: 'IP ONU belum tersedia' })
+
+    const targetPort = Number(process.env.REMOTE_PROXY_TARGET_PORT || 80)
+    const publicUrl = process.env.REMOTE_PROXY_PUBLIC_URL || `${req.protocol}://${req.hostname}`
+    const session = await createRemoteSession({
+      targetHost: customer.ipAddress,
+      targetPort,
+      ownerId: req.user.id,
+      customerId: req.params.id,
+      publicUrl,
+    })
+    res.status(201).json(session)
+  } catch (e) {
+    if (/IP ONU|Port ONU|port range|Jumlah sesi|Gagal membuka|PUBLIC_URL/.test(e.message)) {
+      return res.status(422).json({ error: e.message })
+    }
+    next(e)
+  }
+})
+
+router.get('/:id/remote-session/:sessionId', requireRole('ADMIN', 'TECHNICIAN'), async (req, res) => {
+  const session = getRemoteSession(req.params.sessionId, req.user.id, req.params.id)
+  if (!session) return res.status(404).json({ error: 'Remote session expired or not found' })
+  res.json(session)
+})
+
+router.delete('/:id/remote-session/:sessionId', requireRole('ADMIN', 'TECHNICIAN'), async (req, res) => {
+  closeRemoteSession(req.params.sessionId, req.user.id, req.params.id)
+  res.status(204).end()
+})
+
 // ── POST /api/customers ───────────────────────────────────────────────────────
 
 router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
@@ -163,7 +236,7 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
       customerId, name, phone, address, lat, lng,
       odpId, odpPort, splitterPortId,
       onuSn, onuIndex, rxPower, txPower,
-      packageName, packageSpeed, vlan, ipAddress, pppoeUsername,
+      packageName, packageSpeed, vlan, ipAddress, pppoeUsername, pppoePassword,
       installerName, installDate, contractExpiry,
       serviceStatus, notes,
     } = req.body
@@ -203,6 +276,7 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
           vlan:           vlan ? parseInt(vlan) : null,
           ipAddress:      ipAddress || null,
           pppoeUsername:  pppoeUsername || null,
+          pppoePassword:  pppoePassword || null,
           installerName:  installerName || null,
           installDate:    installDate ? new Date(installDate) : null,
           contractExpiry: contractExpiry ? new Date(contractExpiry) : null,
@@ -239,7 +313,7 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
       customerId, name, phone, address, lat, lng,
       odpId, odpPort, splitterPortId,
       onuSn, onuIndex, rxPower, txPower,
-      packageName, packageSpeed, vlan, ipAddress, pppoeUsername,
+      packageName, packageSpeed, vlan, ipAddress, pppoeUsername, pppoePassword,
       installerName, installDate, contractExpiry,
       serviceStatus, notes,
     } = req.body
@@ -270,6 +344,7 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
     if (vlan          !== undefined) data.vlan          = vlan ? parseInt(vlan) : null
     if (ipAddress     !== undefined) data.ipAddress     = ipAddress || null
     if (pppoeUsername !== undefined) data.pppoeUsername = pppoeUsername || null
+    if (pppoePassword !== undefined) data.pppoePassword = pppoePassword || null
     if (installerName !== undefined) data.installerName = installerName || null
     if (installDate   !== undefined) data.installDate   = installDate ? new Date(installDate) : null
     if (contractExpiry !== undefined) data.contractExpiry = contractExpiry ? new Date(contractExpiry) : null

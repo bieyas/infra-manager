@@ -17,7 +17,7 @@ const IC = 'w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg
 const STATUS_OPTIONS = [
   { value: 'ACTIVE',     label: 'Aktif',           dot: 'bg-emerald-500' },
   { value: 'SUSPENDED',  label: 'Isolir / Suspend', dot: 'bg-amber-400' },
-  { value: 'TERMINATED', label: 'Berhenti',         dot: 'bg-rose-500' },
+  { value: 'TERMINATED', label: 'Putus Berlangganan', dot: 'bg-rose-500' },
 ]
 
 const PACKAGE_PRESETS = ['5 Mbps Shared', '10 Mbps Shared', '15 Mbps Shared', '20 Mbps Shared', '30 Mbps Shared', '50 Mbps Shared']

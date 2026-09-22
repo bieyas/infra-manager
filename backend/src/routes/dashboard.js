@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import prisma from '../lib/prisma.js'
 import { authenticate } from '../middleware/auth.js'
+import { triggerCustomerSync } from '../lib/customerSync.js'
 
 const router = Router()
 router.use(authenticate)
@@ -8,12 +9,16 @@ router.use(authenticate)
 // GET /api/dashboard/stats
 router.get('/stats', async (req, res, next) => {
   try {
+    await triggerCustomerSync()
     const [
       deviceGroups,
       alertGroups,
       odcCount,
       odpCount,
       customerStats,
+      customerConnectionStats,
+      activeOnlineCustomers,
+      customerSyncDevices,
       recentAlerts,
       topDevices,
     ] = await Promise.all([
@@ -35,6 +40,17 @@ router.get('/stats', async (req, res, next) => {
       prisma.customer.groupBy({
         by: ['serviceStatus'],
         _count: { _all: true },
+      }),
+      prisma.customer.groupBy({
+        by: ['connectionStatus'],
+        _count: { _all: true },
+      }),
+      prisma.customer.count({
+        where: { serviceStatus: 'ACTIVE', connectionStatus: 'ONLINE' },
+      }),
+      prisma.device.findMany({
+        where: { type: 'ROUTER', vendor: { not: null } },
+        select: { id: true, name: true, vendor: true, customerSyncAt: true, customerSyncStatus: true, customerSyncError: true },
       }),
       // Recent 5 unacked alerts
       prisma.alert.findMany({
@@ -77,6 +93,10 @@ router.get('/stats', async (req, res, next) => {
       customers[g.serviceStatus] = g._count._all
       customers.total += g._count._all
     })
+    customerConnectionStats.forEach(g => {
+      customers[g.connectionStatus] = g._count._all
+    })
+    customers.ONLINE = activeOnlineCustomers
 
     res.json({
       devices: deviceStats,
@@ -84,6 +104,16 @@ router.get('/stats', async (req, res, next) => {
       odc: { total: odcCount },
       odp: { total: odpCount },
       customers,
+      customerSync: customerSyncDevices
+        .filter(device => /mikrotik|routeros/i.test(device.vendor || ''))
+        .map(({ id, name, vendor, customerSyncAt, customerSyncStatus, customerSyncError }) => ({
+          deviceId: id,
+          deviceName: name,
+          vendor,
+          lastSyncAt: customerSyncAt,
+          status: customerSyncStatus || 'PENDING',
+          error: customerSyncError,
+        })),
       recentAlerts,
       topDevices,
     })

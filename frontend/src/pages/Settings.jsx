@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Sun, Moon, Bell, Shield, Database, Clock, Save, MapPin, Image,
-  Settings2, User, Key, LogOut, CheckCircle,
+  Settings2, User, Key, LogOut, CheckCircle, Network, Copy, AlertTriangle,
 } from 'lucide-react'
 import Card, { CardHeader, CardBody } from '../components/ui/Card'
 import Button from '../components/ui/Button'
@@ -53,12 +53,22 @@ const TABS = [
   { id: 'appearance', label: 'Tampilan',    icon: Sun },
   { id: 'map',        label: 'Peta',        icon: MapPin },
   { id: 'ftth',       label: 'FTTH',        icon: Settings2 },
+  { id: 'nat',        label: 'NAT Remote',  icon: Network },
   { id: 'notif',      label: 'Notifikasi',  icon: Bell },
   { id: 'system',     label: 'Sistem',      icon: Database },
 ]
 
 const ROLE_LABELS = { ADMIN: 'Administrator', TECHNICIAN: 'Teknisi', VIEWER: 'Viewer' }
 const ROLE_COLORS = { ADMIN: 'text-rose-400 bg-rose-500/10', TECHNICIAN: 'text-amber-400 bg-amber-500/10', VIEWER: 'text-sky-400 bg-sky-500/10' }
+
+function buildNftConfig(nat) {
+  const source = nat.sourceCidr.trim() || '0.0.0.0/0'
+  const wan = nat.wanInterface.trim() || 'eth0'
+  const publicPort = nat.publicPort.trim() || '8080'
+  const targetIp = nat.targetIp.trim() || '192.168.1.10'
+  const targetPort = nat.targetPort.trim() || '80'
+  return `# Review sebelum diterapkan pada native server\n\n# Aktifkan IPv4 forwarding\nsysctl -w net.ipv4.ip_forward=1\n\n# DNAT remote access\nnft add table ip infra_manager\nnft 'add chain ip infra_manager prerouting { type nat hook prerouting priority dstnat; policy accept; }'\nnft 'add chain ip infra_manager postrouting { type nat hook postrouting priority srcnat; policy accept; }'\nnft add rule ip infra_manager prerouting iifname "${wan}" ip saddr ${source} tcp dport ${publicPort} dnat to ${targetIp}:${targetPort}\nnft add rule ip infra_manager postrouting oifname "${wan}" ip daddr ${targetIp} tcp dport ${targetPort} masquerade`
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 export default function Settings() {
@@ -97,6 +107,16 @@ export default function Settings() {
     autoBackup: false,
   })
 
+  const [nat, setNat] = useState({
+    enabled: false,
+    wanInterface: 'eth0',
+    publicHost: '',
+    publicPort: '8080',
+    targetIp: '',
+    targetPort: '80',
+    sourceCidr: '',
+  })
+
   const [mapCenter, setMapCenterState] = useState({
     lat: mapSettings.defaultCenter.lat.toString(),
     lng: mapSettings.defaultCenter.lng.toString(),
@@ -106,7 +126,11 @@ export default function Settings() {
   useEffect(() => {
     const saved = localStorage.getItem('app_settings')
     if (saved) {
-      try { setPrefs(p => ({ ...p, ...JSON.parse(saved) })) } catch {}
+      try {
+        const parsed = JSON.parse(saved)
+        setPrefs(p => ({ ...p, ...parsed }))
+        if (parsed.nat) setNat(n => ({ ...n, ...parsed.nat }))
+      } catch {}
     }
   }, [])
 
@@ -119,9 +143,18 @@ export default function Settings() {
 
   // ── Save handlers ──
   const savePrefs = useCallback(() => {
-    localStorage.setItem('app_settings', JSON.stringify(prefs))
+    localStorage.setItem('app_settings', JSON.stringify({ ...prefs, nat }))
     toast.success('Pengaturan tersimpan')
-  }, [prefs, toast])
+  }, [prefs, nat, toast])
+
+  const copyNatConfig = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(buildNftConfig(nat))
+      toast.success('Konfigurasi nftables berhasil disalin')
+    } catch {
+      toast.error('Gagal menyalin konfigurasi')
+    }
+  }, [nat, toast])
 
   const saveMapCenter = useCallback(() => {
     const lat = parseFloat(mapCenter.lat)
@@ -174,7 +207,7 @@ export default function Settings() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 overflow-x-auto pb-1 border-b border-[var(--border)]">
-        {TABS.map(t => {
+        {TABS.filter(t => t.id !== 'nat' || user?.role === 'ADMIN').map(t => {
           const Icon = t.icon
           return (
             <button
@@ -428,6 +461,44 @@ export default function Settings() {
               </div>
               <Button variant="outline" size="sm" icon={Save} onClick={savePrefs}>Simpan</Button>
             </CardBody>
+          </Card>
+        </div>
+      )}
+
+      {/* ── Tab: NAT Remote ─────────────────────────────────────────────── */}
+      {tab === 'nat' && user?.role === 'ADMIN' && (
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <Network size={14} className="accent-text" />
+              <span className="text-sm font-semibold text-primary">Remote ONU melalui NAT</span>
+            </CardHeader>
+            <CardBody className="space-y-4">
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-400" />
+                <p className="text-[10px] leading-relaxed text-secondary">NAT membuka port dari internet ke ONU. Batasi sumber dengan CIDR tepercaya, gunakan port publik yang tidak standar, dan terapkan rule hanya setelah diverifikasi di native server.</p>
+              </div>
+              <div className="flex items-center justify-between py-1">
+                <div>
+                  <p className="text-xs font-medium text-primary">Konfigurasi aktif</p>
+                  <p className="text-[10px] text-muted">Menandai konfigurasi ini siap diterapkan di native server</p>
+                </div>
+                <Toggle checked={nat.enabled} onChange={v => setNat(n => ({ ...n, enabled: v }))} />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1"><label className="text-xs font-medium text-secondary">Interface WAN</label><Input value={nat.wanInterface} onChange={e => setNat(n => ({ ...n, wanInterface: e.target.value }))} placeholder="eth0" /></div>
+                <div className="space-y-1"><label className="text-xs font-medium text-secondary">Host publik / DDNS</label><Input value={nat.publicHost} onChange={e => setNat(n => ({ ...n, publicHost: e.target.value }))} placeholder="remote.example.com" /></div>
+                <div className="space-y-1"><label className="text-xs font-medium text-secondary">Port publik</label><Input type="number" min="1024" max="65535" value={nat.publicPort} onChange={e => setNat(n => ({ ...n, publicPort: e.target.value }))} /></div>
+                <div className="space-y-1"><label className="text-xs font-medium text-secondary">IP ONU tujuan</label><Input value={nat.targetIp} onChange={e => setNat(n => ({ ...n, targetIp: e.target.value }))} placeholder="192.168.1.10" /></div>
+                <div className="space-y-1"><label className="text-xs font-medium text-secondary">Port layanan ONU</label><Input type="number" min="1" max="65535" value={nat.targetPort} onChange={e => setNat(n => ({ ...n, targetPort: e.target.value }))} /></div>
+                <div className="space-y-1"><label className="text-xs font-medium text-secondary">Allowlist sumber (CIDR)</label><Input value={nat.sourceCidr} onChange={e => setNat(n => ({ ...n, sourceCidr: e.target.value }))} placeholder="203.0.113.10/32" /></div>
+              </div>
+              <div className="flex gap-2 pt-1"><Button variant="outline" size="sm" icon={Save} onClick={savePrefs}>Simpan Konfigurasi</Button><Button variant="ghost" size="sm" icon={Copy} onClick={copyNatConfig}>Salin Rule nftables</Button></div>
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader><Shield size={14} className="accent-text" /><span className="text-sm font-semibold text-primary">Preview Rule</span></CardHeader>
+            <CardBody><pre className="overflow-x-auto rounded-lg bg-black/20 p-3 text-[10px] leading-relaxed text-secondary whitespace-pre-wrap break-all">{buildNftConfig(nat)}</pre></CardBody>
           </Card>
         </div>
       )}

@@ -1,4 +1,4 @@
-const BASE = '/api'
+const BASE = import.meta.env.VITE_API_URL || '/api'
 
 function getTokens() {
   return {
@@ -73,7 +73,10 @@ export async function apiFetch(path, options = {}) {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    const err  = new Error(body.error ?? `HTTP ${res.status}`)
+    const message = body.detail
+      ? `${body.error ?? `HTTP ${res.status}`}: ${body.detail}`
+      : (body.error ?? `HTTP ${res.status}`)
+    const err  = new Error(message)
     err.status = res.status
     err.body   = body
     throw err

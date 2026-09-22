@@ -28,6 +28,7 @@ import { hasFeatureAccess, NAV_PERMISSION_MAP } from '../../lib/permissions'
 
 const NAV_TOP = [
   { label: 'Dashboard',    to: '/',           icon: LayoutDashboard },
+  { label: 'Pelanggan',    to: '/customers',  icon: UserRound },
   { label: 'Devices',      to: '/devices',    icon: Server },
   { label: 'Interfaces',   to: '/interfaces', icon: Layers },
   { label: 'Topology',     to: '/topology',   icon: Network },
@@ -42,7 +43,6 @@ const NAV_FTTH = [
   { label: 'Peta FTTH',    to: '/ftth',       icon: Map },
   { label: 'ODC',          to: '/odc',        icon: Box },
   { label: 'ODP',          to: '/odp',        icon: Cable },
-  { label: 'Pelanggan',   to: '/customers',  icon: UserRound },
 ]
 
 const NAV_BOTTOM = [

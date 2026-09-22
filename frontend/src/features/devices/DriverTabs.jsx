@@ -10,6 +10,7 @@ import Badge from '../../components/ui/Badge'
 import StatusDot from '../../components/ui/StatusDot'
 import ProgressBar from '../../components/ui/ProgressBar'
 import Button from '../../components/ui/Button'
+import { api } from '../../lib/api'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -307,6 +308,195 @@ export function LiveTab({ snapshot, driverName, capabilities, loading, error, fe
         </Card>
       )}
     </div>
+  )
+}
+
+// ── Device sessions ──────────────────────────────────────────────────────────
+
+export function SessionTab({ deviceId, sessions, secrets, sourceErrors, loading, error, onRefetch }) {
+  const [query, setQuery] = useState('')
+  const [preview, setPreview] = useState(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState(null)
+  const [importResult, setImportResult] = useState(null)
+  const [importLoading, setImportLoading] = useState(false)
+  const list = Array.isArray(sessions) ? sessions : []
+  const secretByUsername = new Map((Array.isArray(secrets) ? secrets : []).map(secret => [
+    secret.username?.toLowerCase(), secret,
+  ]))
+  const enrichedList = list.map(session => ({
+    ...session,
+    secret: secretByUsername.get(session.username?.toLowerCase()) ?? null,
+  }))
+  const normalizedQuery = query.trim().toLowerCase()
+  const filtered = enrichedList.filter(session => [
+    session.username,
+    session.address,
+    session.callerId,
+    session.service,
+    session.secret?.profile,
+    session.secret?.comment,
+  ].some(value => String(value ?? '').toLowerCase().includes(normalizedQuery)))
+  const groups = Object.entries(filtered.reduce((result, session) => {
+    const service = session.service?.trim() || 'Unknown'
+    if (!result[service]) result[service] = []
+    result[service].push(session)
+    return result
+  }, {})).sort(([a], [b]) => a.localeCompare(b))
+
+  const loadPreview = async () => {
+    setPreviewLoading(true)
+    setPreviewError(null)
+    try {
+      setPreview(await api.get(`/driver/${deviceId}/customer-import-preview`))
+    } catch (previewErr) {
+      setPreviewError(previewErr.message)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const importCustomers = async () => {
+    if (!preview?.rows?.length || !window.confirm(`Import/update ${preview.rows.length} session ke data pelanggan?`)) return
+    setImportLoading(true)
+    setPreviewError(null)
+    try {
+      setImportResult(await api.post(`/driver/${deviceId}/customer-import`, {
+        usernames: preview.rows.map(row => row.username),
+      }))
+    } catch (importError) {
+      setPreviewError(importError.message)
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  if (loading && sessions == null) {
+    return <Card><CardBody><div className="py-10 flex justify-center"><Loader2 size={20} className="animate-spin text-muted" /></div></CardBody></Card>
+  }
+
+  if (error && sessions == null) {
+    return (
+      <Card><CardBody>
+        <div className="flex items-start gap-3 p-2 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">
+          <AlertCircle size={14} className="shrink-0 mt-0.5" />
+          <div><p className="font-medium">Gagal mengambil session</p><p className="text-rose-300/70 mt-0.5">{error}</p></div>
+        </div>
+        <Button variant="outline" size="sm" icon={RefreshCw} onClick={onRefetch} className="mt-3">Coba Lagi</Button>
+      </CardBody></Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <span className="text-xs font-semibold text-primary flex items-center gap-1.5">
+          <Users size={12} /> Active Sessions
+          <Badge variant="online" className="ml-1">{list.length}</Badge>
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <input
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder="Cari username, IP, caller ID…"
+            className="w-40 sm:w-56 px-2 py-1 rounded border border-[var(--border)] bg-[var(--bg-secondary)] text-[10px] text-primary outline-none focus:border-[var(--accent)]"
+          />
+          <button onClick={onRefetch} disabled={loading} className="text-muted hover:text-primary disabled:opacity-40" title="Refresh sessions">
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <Button variant="outline" size="sm" onClick={loadPreview} disabled={previewLoading}>
+            {previewLoading ? <Loader2 size={12} className="animate-spin" /> : 'Preview Import'}
+          </Button>
+        </div>
+      </CardHeader>
+      {(sourceErrors?.pppoeSessions || sourceErrors?.pppSecrets) && (
+        <div className="mx-3 mt-3 flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-[10px] text-amber-300">
+          <AlertCircle size={13} className="shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <p className="font-medium">Sebagian data session gagal diambil</p>
+            {sourceErrors.pppoeSessions && <p>Active session: {sourceErrors.pppoeSessions}</p>}
+            {sourceErrors.pppSecrets && <p>Profile/secret: {sourceErrors.pppSecrets}</p>}
+          </div>
+        </div>
+      )}
+      {filtered.length === 0 ? (
+        <CardBody><EmptyState message={list.length ? 'Tidak ada session yang cocok.' : 'Tidak ada session aktif.'} /></CardBody>
+      ) : (
+        <div className="space-y-3 p-3">
+          {groups.map(([service, serviceSessions]) => (
+            <div key={service} className="rounded-lg border border-[var(--border)]/60 overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2 bg-[var(--surface-2)] border-b border-[var(--border)]/50">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-primary">{service}</span>
+                <Badge variant="neutral">{serviceSessions.length}</Badge>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="text-left text-[10px] text-muted border-b border-[var(--border)]/50">
+                    <th className="px-4 py-2 font-medium">Username</th>
+                    <th className="px-3 py-2 font-medium">Profile</th>
+                    <th className="px-3 py-2 font-medium">Rate Limit</th>
+                    <th className="px-3 py-2 font-medium">IP Address</th>
+                    <th className="px-3 py-2 font-medium">Caller ID</th>
+                    <th className="px-3 py-2 font-medium">Uptime</th>
+                    <th className="px-3 py-2 font-medium">Auth</th>
+                  </tr></thead>
+                  <tbody>{serviceSessions.map((session, index) => (
+                    <tr key={session.id ?? `${session.username}-${index}`} className="border-b border-[var(--border)]/30 last:border-0 hover:bg-[var(--accent-glow)]">
+                      <td className="px-4 py-2.5 font-medium text-primary whitespace-nowrap">{session.username || '—'}</td>
+                      <td className="px-3 py-2.5 text-secondary">{session.secret?.profile || '—'}</td>
+                      <td className="px-3 py-2.5 font-mono text-secondary">{session.secret?.rateLimit || '—'}</td>
+                      <td className="px-3 py-2.5 font-mono text-secondary">{session.address || '—'}</td>
+                      <td className="px-3 py-2.5 font-mono text-secondary">{session.callerId || '—'}</td>
+                      <td className="px-3 py-2.5 text-secondary whitespace-nowrap">{session.uptime || '—'}</td>
+                      <td className="px-3 py-2.5"><Badge variant={session.radius ? 'info' : 'neutral'}>{session.radius ? 'RADIUS' : 'Local'}</Badge></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {previewError && <p className="px-3 pb-3 text-[10px] text-rose-400">Preview gagal: {previewError}</p>}
+      {preview && (
+        <div className="mx-3 mb-3 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent-glow)]/30 overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--accent)]/20">
+            <span className="text-[10px] font-semibold text-primary">Import Preview</span>
+            <Badge variant="neutral">{preview.total} total</Badge>
+            <Badge variant="online">{preview.create} create</Badge>
+            <Badge variant="info">{preview.update} update</Badge>
+            <Button variant="primary" size="sm" onClick={importCustomers} disabled={importLoading}>
+              {importLoading ? <Loader2 size={12} className="animate-spin" /> : 'Import / Update'}
+            </Button>
+          </div>
+          <div className="max-h-56 overflow-auto">
+            <table className="w-full text-[10px]">
+              <thead><tr className="text-left text-muted border-b border-[var(--border)]/40">
+                <th className="px-3 py-2 font-medium">Username</th>
+                <th className="px-3 py-2 font-medium">Name</th>
+                <th className="px-3 py-2 font-medium">Suggested ID</th>
+                <th className="px-3 py-2 font-medium">Existing</th>
+                <th className="px-3 py-2 font-medium">Action</th>
+              </tr></thead>
+              <tbody>{preview.rows.map(row => (
+                <tr key={row.username} className="border-b border-[var(--border)]/30 last:border-0">
+                  <td className="px-3 py-2 font-medium text-primary">{row.username}</td>
+                  <td className="px-3 py-2 text-secondary">{row.normalizedName || '—'}</td>
+                  <td className="px-3 py-2 font-mono text-secondary">{row.existing?.customerId || row.suggestedCustomerId}</td>
+                  <td className="px-3 py-2 text-secondary">{row.existing?.name || 'Belum ada'}</td>
+                  <td className="px-3 py-2"><Badge variant={row.action === 'CREATE' ? 'online' : 'info'}>{row.action}</Badge></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          {importResult && (
+            <div className="px-3 py-2 border-t border-[var(--accent)]/20 text-[10px] text-secondary">
+              Hasil: <span className="text-emerald-400">{importResult.created} dibuat</span>, <span className="text-cyan-400">{importResult.updated} diperbarui</span>, <span className="text-rose-400">{importResult.failed} gagal</span>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
   )
 }
 

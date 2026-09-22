@@ -1,4 +1,4 @@
-import { MikrotikDriver }       from './mikrotik.js'
+import { MikrotikDriver }       from './mikrotik/mikrotikDriver.js'
 import { HuaweiOltDriver }      from './olt/HuaweiOlt.js'
 import { ZteOltDriver }         from './olt/ZteOlt.js'
 import { ZteSnmpDriver }        from './olt/ZteSnmp.js'

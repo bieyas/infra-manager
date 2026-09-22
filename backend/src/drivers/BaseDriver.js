@@ -43,6 +43,8 @@ export class BaseDriver {
       ipAddresses: false,
       routes:      false,
       neighbors:   false,
+      pppoeSessions: false,
+      pppSecrets:  false,
       resource:    false,
       exec:        false,
     }

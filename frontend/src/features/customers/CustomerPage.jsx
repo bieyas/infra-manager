@@ -1,17 +1,17 @@
-import React, { useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import React, { useState, useCallback, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Plus, Search, RefreshCw, Users, Wifi,
-  CheckCircle2, AlertTriangle, XCircle, Pencil, Trash2,
+  Plus, Search, RefreshCw, Users, Wifi, WifiOff,
+  AlertTriangle, XCircle, Pencil, Trash2,
   ChevronLeft, ChevronRight, MapPin, LayoutGrid, List,
-  Package, Cable,
+  Package, Cable, Server,
 } from 'lucide-react'
 import { useToast } from '../../context/ToastContext'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
 import ConfirmModal from '../../components/ui/ConfirmModal'
 import { api } from '../../lib/api'
-import { useCustomerList, useCustomerStats, STATUS_CFG } from './useCustomers'
+import { useCustomerList, useCustomerStats, STATUS_CFG, CONNECTION_CFG } from './useCustomers'
 import CustomerDetail from './CustomerDetail'
 
 const STATUS_BADGE = {
@@ -22,10 +22,18 @@ const STATUS_BADGE = {
 
 // ── Stats Card ────────────────────────────────────────────────────────────────
 
-function StatCard({ icon: Icon, label, value, total, color, barColor }) {
+function StatCard({ icon: Icon, label, value, total, color, barColor, onClick }) {
   const pct = total > 0 ? Math.round((value / total) * 100) : 0
   return (
-    <div className="card p-3 space-y-2">
+    <div
+      className="card p-3 space-y-2 cursor-pointer hover:border-[var(--accent)]/50 transition-colors"
+      onClick={onClick}
+      onKeyDown={event => {
+        if (event.key === 'Enter' || event.key === ' ') onClick?.()
+      }}
+      role="button"
+      tabIndex={0}
+    >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${color}`}>
@@ -52,6 +60,7 @@ function StatCard({ icon: Icon, label, value, total, color, barColor }) {
 
 function CustomerCard({ c, onClick, onEdit, onDelete }) {
   const cfg = STATUS_CFG[c.serviceStatus] ?? STATUS_CFG.ACTIVE
+  const connectionCfg = CONNECTION_CFG[c.connectionStatus] ?? CONNECTION_CFG.UNKNOWN
   return (
     <div
       onClick={onClick}
@@ -64,10 +73,15 @@ function CustomerCard({ c, onClick, onEdit, onDelete }) {
       <div className="p-3 space-y-2">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-primary truncate">{c.name}</p>
+            <p className="text-xs font-semibold text-primary truncate">{String(c.name ?? '').toLocaleUpperCase('id-ID')}</p>
             <p className="text-[10px] text-muted font-mono">{c.customerId}</p>
           </div>
-          <Badge variant={STATUS_BADGE[c.serviceStatus] ?? 'online'}>{cfg.label}</Badge>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <Badge variant={STATUS_BADGE[c.serviceStatus] ?? 'online'}>{cfg.label}</Badge>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full border font-medium ${connectionCfg.bg} ${connectionCfg.color}`}>
+              {connectionCfg.label}
+            </span>
+          </div>
         </div>
 
         {c.packageName && (
@@ -97,8 +111,9 @@ function CustomerCard({ c, onClick, onEdit, onDelete }) {
         )}
 
         <div className="flex items-center justify-between pt-1.5 border-t border-[var(--border)]">
-          <span className="text-[9px] text-muted truncate max-w-[70%]">
-            {c.address || '—'}
+          <span className="flex items-center gap-1 text-[9px] text-muted truncate max-w-[70%]" title={c.sourceDevice?.name || 'Device belum diketahui'}>
+            <Server size={9} className="shrink-0 opacity-60" />
+            <span className="truncate">{c.sourceDevice?.name || 'Device belum diketahui'}</span>
           </span>
           <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
             <button onClick={e => { e.stopPropagation(); onEdit() }}
@@ -120,6 +135,7 @@ function CustomerCard({ c, onClick, onEdit, onDelete }) {
 
 function CustomerRow({ c, onClick, onEdit, onDelete }) {
   const cfg = STATUS_CFG[c.serviceStatus] ?? STATUS_CFG.ACTIVE
+  const connectionCfg = CONNECTION_CFG[c.connectionStatus] ?? CONNECTION_CFG.UNKNOWN
   return (
     <tr
       onClick={onClick}
@@ -127,13 +143,18 @@ function CustomerRow({ c, onClick, onEdit, onDelete }) {
     >
       <td className="py-2.5 pl-4 pr-2">
         <div>
-          <p className="text-xs font-medium text-primary">{c.name}</p>
+            <p className="text-xs font-medium text-primary">{String(c.name ?? '').toLocaleUpperCase('id-ID')}</p>
           <p className="text-[10px] text-muted font-mono">{c.customerId}</p>
         </div>
       </td>
       <td className="py-2.5 px-2 hidden md:table-cell">
         <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${cfg.bg} ${cfg.color}`}>
           {cfg.label}
+        </span>
+      </td>
+      <td className="py-2.5 px-2 hidden md:table-cell">
+        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${connectionCfg.bg} ${connectionCfg.color}`}>
+          {connectionCfg.label}
         </span>
       </td>
       <td className="py-2.5 px-2 hidden lg:table-cell">
@@ -175,9 +196,11 @@ function CustomerRow({ c, onClick, onEdit, onDelete }) {
 export default function CustomerPage() {
   const navigate = useNavigate()
   const toast    = useToast()
+  const [searchParams, setSearchParams] = useSearchParams()
 
-  const [search,       setSearch]       = useState('')
-  const [status,       setStatus]       = useState('')
+  const [search, setSearch] = useState(() => searchParams.get('q') ?? '')
+  const [status, setStatus] = useState(() => searchParams.get('status') ?? '')
+  const [connectionStatus, setConnectionStatus] = useState(() => searchParams.get('connectionStatus') ?? '')
   const [page,         setPage]         = useState(1)
   const [view,         setView]         = useState('grid')   // 'grid' | 'list'
   const [detailId,     setDetailId]     = useState(null)
@@ -187,9 +210,23 @@ export default function CustomerPage() {
 
   const LIMIT = 48
   const { data: customers, total, loading, error, refetch } = useCustomerList({
-    q: search, status, page, limit: LIMIT,
+    q: search, status, connectionStatus, page, limit: LIMIT,
   })
   const totalPages = Math.ceil(total / LIMIT) || 1
+
+  const applyStatsFilter = (nextStatus, nextConnectionStatus = '') => {
+    setStatus(nextStatus)
+    setConnectionStatus(nextConnectionStatus)
+    setPage(1)
+  }
+
+  useEffect(() => {
+    const next = new URLSearchParams()
+    if (search) next.set('q', search)
+    if (status) next.set('status', status)
+    if (connectionStatus) next.set('connectionStatus', connectionStatus)
+    setSearchParams(next, { replace: true })
+  }, [search, status, connectionStatus, setSearchParams])
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return
@@ -227,25 +264,62 @@ export default function CustomerPage() {
       </div>
 
       {/* ── Stats Cards ── */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="hidden md:grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
-          icon={CheckCircle2} label="Aktif"
-          value={stats.ACTIVE} total={stats.total}
+          icon={Wifi} label="Online"
+          value={stats.ONLINE} total={stats.total}
           color="bg-emerald-500/15 text-emerald-400"
           barColor="bg-emerald-500"
+          onClick={() => applyStatsFilter('ACTIVE', 'ONLINE')}
         />
         <StatCard
           icon={AlertTriangle} label="Isolir"
           value={stats.SUSPENDED} total={stats.total}
           color="bg-amber-500/15 text-amber-400"
           barColor="bg-amber-400"
+          onClick={() => applyStatsFilter('SUSPENDED')}
         />
         <StatCard
-          icon={XCircle} label="Berhenti"
+          icon={WifiOff} label="Offline"
+          value={stats.OFFLINE} total={stats.total}
+          color="bg-rose-500/15 text-rose-400"
+          barColor="bg-rose-500"
+          onClick={() => applyStatsFilter('ACTIVE', 'OFFLINE')}
+        />
+        <StatCard
+          icon={XCircle} label="Putus"
           value={stats.TERMINATED} total={stats.total}
           color="bg-rose-500/15 text-rose-400"
           barColor="bg-rose-500"
+          onClick={() => applyStatsFilter('TERMINATED')}
         />
+      </div>
+      <div className="flex md:hidden items-center justify-between gap-2 px-1 text-[10px] text-muted">
+        <button type="button" onClick={() => applyStatsFilter('ACTIVE', 'ONLINE')} className="flex items-center gap-1 whitespace-nowrap hover:text-primary transition-colors">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          Online: <b className="text-primary">{stats.ONLINE.toLocaleString('id-ID')}</b>
+        </button>
+        <button type="button" onClick={() => applyStatsFilter('SUSPENDED')} className="flex items-center gap-1 whitespace-nowrap hover:text-primary transition-colors">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+          Isolir: <b className="text-primary">{stats.SUSPENDED.toLocaleString('id-ID')}</b>
+        </button>
+        <button type="button" onClick={() => applyStatsFilter('ACTIVE', 'OFFLINE')} className="flex items-center gap-1 whitespace-nowrap hover:text-primary transition-colors">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+          Offline: <b className="text-primary">{stats.OFFLINE.toLocaleString('id-ID')}</b>
+        </button>
+        <button type="button" onClick={() => applyStatsFilter('TERMINATED')} className="flex items-center gap-1 whitespace-nowrap hover:text-primary transition-colors">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+          Putus: <b className="text-primary">{stats.TERMINATED.toLocaleString('id-ID')}</b>
+        </button>
+      </div>
+      <div className="hidden md:block">
+        {stats.customerSync?.map(router => (
+          <div key={router.deviceId} className={`text-[10px] ${router.status === 'ERROR' ? 'text-rose-400' : router.status === 'RUNNING' ? 'text-amber-400' : 'text-muted'}`}>
+            Sync {router.deviceName}: {router.status.toLowerCase()}
+            {router.lastSyncAt && ` • ${new Date(router.lastSyncAt).toLocaleString('id-ID')}`}
+            {router.error && ` • ${router.error}`}
+          </div>
+        ))}
       </div>
 
       {/* ── Filter + View Toggle ── */}
@@ -269,6 +343,17 @@ export default function CustomerPage() {
           <option value="ACTIVE">Aktif</option>
           <option value="SUSPENDED">Isolir</option>
           <option value="TERMINATED">Berhenti</option>
+        </select>
+
+        <select
+          value={connectionStatus}
+          onChange={e => { setConnectionStatus(e.target.value); setPage(1) }}
+          className="px-3 py-2 text-xs bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg text-primary focus:outline-none focus:border-[var(--accent)] transition-colors"
+        >
+          <option value="">Semua Koneksi</option>
+          <option value="ONLINE">Online</option>
+          <option value="OFFLINE">Offline</option>
+          <option value="UNKNOWN">Belum dicek</option>
         </select>
 
         <button
@@ -320,10 +405,10 @@ export default function CustomerPage() {
         <div className="text-center py-16 text-muted text-xs space-y-2">
           <Users size={32} className="mx-auto opacity-15" />
           <p className="text-sm font-medium text-primary opacity-40">
-            {search || status ? 'Tidak ada data' : 'Belum ada pelanggan'}
+            {search || status || connectionStatus ? 'Tidak ada data' : 'Belum ada pelanggan'}
           </p>
-          <p>{search || status ? 'Coba ubah filter pencarian' : 'Mulai tambah pelanggan baru'}</p>
-          {!search && !status && (
+          <p>{search || status || connectionStatus ? 'Coba ubah filter pencarian' : 'Mulai tambah pelanggan baru'}</p>
+          {!search && !status && !connectionStatus && (
             <Button onClick={() => navigate('/customers/new')} icon={Plus} size="sm" className="mt-3">
               Tambah Pelanggan
             </Button>
@@ -353,6 +438,7 @@ export default function CustomerPage() {
               <tr className="border-b border-[var(--border)] bg-[var(--bg-secondary)]">
                 <th className="text-left py-2.5 pl-4 pr-2 text-[10px] font-semibold text-muted uppercase tracking-wider">Pelanggan</th>
                 <th className="text-left py-2.5 px-2 text-[10px] font-semibold text-muted uppercase tracking-wider hidden md:table-cell">Status</th>
+                <th className="text-left py-2.5 px-2 text-[10px] font-semibold text-muted uppercase tracking-wider hidden md:table-cell">Koneksi</th>
                 <th className="text-left py-2.5 px-2 text-[10px] font-semibold text-muted uppercase tracking-wider hidden lg:table-cell">Paket</th>
                 <th className="text-left py-2.5 px-2 text-[10px] font-semibold text-muted uppercase tracking-wider hidden xl:table-cell">ODP</th>
                 <th className="text-left py-2.5 px-2 text-[10px] font-semibold text-muted uppercase tracking-wider hidden xl:table-cell">PPPoE</th>

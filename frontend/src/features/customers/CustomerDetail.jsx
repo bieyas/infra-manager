@@ -1,10 +1,12 @@
-import React from 'react'
+import React, { useState } from 'react'
 import {
   X, User, MapPin, Wifi, Package, Phone, Calendar,
-  Network, Hash, Loader2, AlertCircle, ExternalLink,
+  Network, Hash, Loader2, AlertCircle, ExternalLink, Copy, Router,
 } from 'lucide-react'
 import Badge from '../../components/ui/Badge'
-import { useCustomerDetail, STATUS_CFG } from './useCustomers'
+import { useCustomerDetail, STATUS_CFG, CONNECTION_CFG } from './useCustomers'
+import { useToast } from '../../context/ToastContext'
+import { api } from '../../lib/api'
 
 function Row({ label, value, mono = false }) {
   if (!value && value !== 0) return null
@@ -28,10 +30,87 @@ function Section({ title, icon: Icon, children }) {
   )
 }
 
+function CopyButton({ value, label }) {
+  const toast = useToast()
+
+  const handleCopy = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = value
+        textarea.setAttribute('readonly', '')
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        const copied = document.execCommand('copy')
+        textarea.remove()
+        if (!copied) throw new Error('copy command failed')
+      }
+      toast.success(`${label} berhasil disalin`)
+    } catch {
+      toast.error(`Gagal menyalin ${label.toLowerCase()}`)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={`Salin ${label}`}
+      aria-label={`Salin ${label}`}
+      className="p-1 rounded text-muted hover:text-[var(--accent)] hover:bg-[var(--bg-secondary)] transition-colors shrink-0"
+    >
+      <Copy size={11} />
+    </button>
+  )
+}
+
+function ActionRow({ label, value, mono = false, action }) {
+  if (!value && value !== 0) return null
+  return (
+    <div className="flex items-start gap-2 py-1.5 border-b border-[var(--border)] last:border-0">
+      <span className="text-[10px] text-muted w-28 shrink-0 pt-0.5">{label}</span>
+      <span className={`text-[11px] text-primary break-all flex-1 ${mono ? 'font-mono' : ''}`}>{value}</span>
+      {action}
+    </div>
+  )
+}
+
 export default function CustomerDetail({ customerId, onClose }) {
   const { data: c, loading, error } = useCustomerDetail(customerId)
+  const toast = useToast()
+  const [remoteLoading, setRemoteLoading] = useState(false)
+
+  const openRemoteOnu = async () => {
+    const popup = window.open('about:blank', '_blank')
+    if (popup) {
+      popup.opener = null
+      popup.document.title = 'Menyiapkan Remote ONU'
+      popup.document.body.innerHTML = '<p style="font-family:sans-serif;padding:24px">Menyiapkan koneksi remote ONU...</p>'
+    }
+    try {
+      setRemoteLoading(true)
+      const session = await api.post(`/customers/${customerId}/remote-session`, {})
+      if (!popup) {
+        await navigator.clipboard?.writeText(session.url)
+        toast.info('Popup diblokir. URL remote sudah disalin jika browser mengizinkan.')
+      } else {
+        popup.location.replace(session.url)
+      }
+      toast.success(`Remote ONU aktif selama ${Math.ceil((new Date(session.expiresAt) - Date.now()) / 60000)} menit`)
+    } catch (e) {
+      popup?.close()
+      toast.error(e.message || 'Gagal membuka remote ONU')
+    } finally {
+      setRemoteLoading(false)
+    }
+  }
 
   const statusCfg = STATUS_CFG[c?.serviceStatus] ?? STATUS_CFG.ACTIVE
+  const connectionCfg = CONNECTION_CFG[c?.connectionStatus] ?? CONNECTION_CFG.UNKNOWN
 
   return (
     <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
@@ -56,9 +135,14 @@ export default function CustomerDetail({ customerId, onClose }) {
           </div>
           <div className="flex items-center gap-2">
             {c && (
-              <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${statusCfg.bg} ${statusCfg.color}`}>
-                {statusCfg.label}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${statusCfg.bg} ${statusCfg.color}`}>
+                  {statusCfg.label}
+                </span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${connectionCfg.bg} ${connectionCfg.color}`}>
+                  {connectionCfg.label}
+                </span>
+              </div>
             )}
             <button onClick={onClose} className="p-1.5 rounded-lg text-muted hover:text-primary hover:bg-[var(--bg-secondary)] transition-colors">
               <X size={14} />
@@ -84,6 +168,8 @@ export default function CustomerDetail({ customerId, onClose }) {
               <Section title="Info Pelanggan" icon={User}>
                 <Row label="ID Pelanggan"   value={c.customerId} mono />
                 <Row label="Nama"           value={c.name} />
+                <Row label="Terakhir online" value={c.connectionLastSeen ? new Date(c.connectionLastSeen).toLocaleString('id-ID') : null} />
+                <Row label="Terakhir dicek" value={c.connectionLastChecked ? new Date(c.connectionLastChecked).toLocaleString('id-ID') : null} />
                 {c.phone && (
                   <div className="flex items-start gap-2 py-1.5 border-b border-[var(--border)]">
                     <span className="text-[10px] text-muted w-28 shrink-0 pt-0.5">Telepon / HP</span>
@@ -113,8 +199,35 @@ export default function CustomerDetail({ customerId, onClose }) {
                 <Row label="Paket"          value={c.packageName} />
                 <Row label="Kecepatan"      value={c.packageSpeed ? `${c.packageSpeed} Mbps` : null} />
                 <Row label="VLAN"           value={c.vlan} mono />
-                <Row label="IP Address"     value={c.ipAddress} mono />
-                <Row label="PPPoE Username" value={c.pppoeUsername} mono />
+                <ActionRow
+                  label="IP Address"
+                  value={c.ipAddress}
+                  mono
+                  action={(
+                    <button
+                      type="button"
+                      title="Buka remote ONU sementara"
+                      aria-label="Buka remote ONU"
+                      onClick={openRemoteOnu}
+                      disabled={remoteLoading}
+                      className="p-1 rounded text-muted hover:text-[var(--accent)] hover:bg-[var(--bg-secondary)] transition-colors shrink-0 disabled:opacity-50"
+                    >
+                      {remoteLoading ? <Loader2 size={12} className="animate-spin" /> : <Router size={12} />}
+                    </button>
+                  )}
+                />
+                <ActionRow
+                  label="PPPoE Username"
+                  value={c.pppoeUsername}
+                  mono
+                  action={<CopyButton value={c.pppoeUsername} label="PPPoE Username" />}
+                />
+                <ActionRow
+                  label="PPPoE Password"
+                  value={c.pppoePassword}
+                  mono
+                  action={<CopyButton value={c.pppoePassword} label="PPPoE Password" />}
+                />
               </Section>
 
               {/* ONU / Jaringan */}

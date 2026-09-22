@@ -17,7 +17,7 @@ import { TYPE_ICON, TYPE_LABEL, STATUS_COLOR, STATUS_LABEL } from './constants'
 import { useDeviceDetail, updateDevice, deleteDevice, syncUplinks } from './useDevices'
 import { useProbe } from './useProbe'
 import { useDriverSnapshot, useDriverExec } from './useDriverSnapshot'
-import { LiveTab, RoutesTab, NeighborsTab, IpAddressTab, ExecPanel } from './DriverTabs'
+import { LiveTab, SessionTab, RoutesTab, NeighborsTab, IpAddressTab, ExecPanel } from './DriverTabs'
 import OltOnuTab from './OltOnuTab'
 import OltPowerTab from './OltPowerTab'
 import { SEV_CONFIG } from '../alerts/constants'
@@ -311,6 +311,7 @@ function buildTabs(caps, isOlt = false) {
   if (!isOlt && caps.ipAddresses)                   extra.push('IP Addr')
   if (!isOlt && caps.routes)                        extra.push('Routes')
   if (!isOlt && caps.neighbors)                     extra.push('Neighbors')
+  if (!isOlt && caps.pppoeSessions)                 extra.push('Session')
   if (caps.exec)                                    extra.push('Console')
   return [...base, ...extra]
 }
@@ -923,6 +924,19 @@ export default function DeviceDetailPage() {
           {tab === 'Neighbors' && (
             <NeighborsTab
               snapshot={snapshot}
+              loading={snapLoading}
+              error={snapError}
+              onRefetch={fetchSnapshot}
+            />
+          )}
+
+          {/* ── Device sessions ── */}
+          {tab === 'Session' && (
+            <SessionTab
+              deviceId={id}
+              sessions={snapshot?.pppoeSessions}
+              secrets={snapshot?.pppSecrets}
+              sourceErrors={snapshot?.sourceErrors}
               loading={snapLoading}
               error={snapError}
               onRefetch={fetchSnapshot}

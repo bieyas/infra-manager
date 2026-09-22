@@ -1,7 +1,7 @@
 import React from 'react'
 import {
-  Server, AlertTriangle, Box, Cable, UserRound,
-  RefreshCw, CheckCircle2, WifiOff,
+  Server, AlertTriangle, UserRound, Wifi, WifiOff,
+  RefreshCw, CheckCircle2,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useAlerts } from '../../context/AlertsContext'
@@ -32,6 +32,22 @@ function LastUpdated({ date, loading, onRefresh }) {
   )
 }
 
+function CustomerSyncStatus({ sync }) {
+  const routers = sync ?? []
+  if (routers.length === 0) return null
+  return (
+    <div className="hidden md:flex flex-wrap items-center gap-2 text-[10px] text-muted">
+      <span>Customer sync:</span>
+      {routers.map(router => (
+        <span key={router.deviceId} className={router.status === 'ERROR' ? 'text-rose-400' : router.status === 'RUNNING' ? 'text-amber-400' : 'text-emerald-400'}>
+          {router.deviceName}: {router.status.toLowerCase()}
+          {router.lastSyncAt && ` (${new Date(router.lastSyncAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })})`}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate()
   const { unackedCount } = useAlerts()
@@ -43,50 +59,50 @@ export default function DashboardPage() {
 
   const statCards = [
     {
-      label: 'Devices Online', icon: Server,
-      value: loading ? '…' : d.ACTIVE ?? 0,
-      total: loading ? null : d.total,
+      label: 'Online', icon: Wifi,
+      value: loading ? '…' : c.ONLINE ?? 0,
+      total: null,
       trend: null, trendUp: true,
       color: 'text-emerald-400', bg: 'bg-emerald-500/10',
-      onClick: () => navigate('/devices'),
+      onClick: () => navigate('/customers?connectionStatus=ONLINE'),
     },
     {
-      label: 'Active Alerts', icon: AlertTriangle,
-      value: loading ? '…' : a.unacked ?? unackedCount,
-      total: loading ? null : a.total ?? null,
+      label: 'Offline', icon: WifiOff,
+      value: loading ? '…' : c.OFFLINE ?? 0,
+      total: null,
       trend: null, trendUp: false,
       color: 'text-rose-400', bg: 'bg-rose-500/10',
-      onClick: () => navigate('/alerts'),
+      onClick: () => navigate('/customers?connectionStatus=OFFLINE'),
     },
     {
-      label: 'Pelanggan Aktif', icon: UserRound,
-      value: loading ? '…' : c.ACTIVE ?? 0,
-      total: loading ? null : c.total,
-      trend: null, trendUp: true,
-      color: 'text-[var(--accent)]', bg: 'bg-[var(--accent-glow)]',
-      onClick: () => navigate('/customers'),
-    },
-    {
-      label: 'Pelanggan Isolir', icon: WifiOff,
+      label: 'Isolir', icon: WifiOff,
       value: loading ? '…' : c.SUSPENDED ?? 0,
-      total: loading ? null : null,
+      total: null,
       trend: null, trendUp: false,
       color: 'text-amber-400', bg: 'bg-amber-500/10',
       onClick: () => navigate('/customers?status=SUSPENDED'),
     },
     {
-      label: 'ODC', icon: Box,
-      value: loading ? '…' : data?.odc?.total ?? 0,
-      total: null, trend: null, trendUp: true,
-      color: 'text-violet-400', bg: 'bg-violet-500/10',
-      onClick: () => navigate('/odc'),
-    },
-    {
-      label: 'ODP', icon: Cable,
-      value: loading ? '…' : data?.odp?.total ?? 0,
+      label: 'Total', icon: UserRound,
+      value: loading ? '…' : c.total ?? 0,
       total: null, trend: null, trendUp: true,
       color: 'text-sky-400', bg: 'bg-sky-500/10',
-      onClick: () => navigate('/odp'),
+      onClick: () => navigate('/customers'),
+    },
+    {
+      label: 'Device', icon: Server,
+      value: loading ? '…' : d.total ?? 0,
+      total: null, trend: null, trendUp: true,
+      color: 'text-emerald-400', bg: 'bg-emerald-500/10',
+      onClick: () => navigate('/devices'),
+    },
+    {
+      label: 'Alert', icon: AlertTriangle,
+      value: loading ? '…' : a.unacked ?? unackedCount,
+      total: null,
+      trend: null, trendUp: false,
+      color: 'text-rose-400', bg: 'bg-rose-500/10',
+      onClick: () => navigate('/alerts'),
     },
   ]
 
@@ -96,7 +112,10 @@ export default function DashboardPage() {
       {/* Header row */}
       <div className="flex items-center justify-between">
         <h1 className="text-sm font-semibold text-primary">Dashboard</h1>
-        <LastUpdated date={lastUpdated} loading={loading} onRefresh={refetch} />
+        <div className="flex flex-col items-end gap-1">
+          <LastUpdated date={lastUpdated} loading={loading} onRefresh={refetch} />
+          <CustomerSyncStatus sync={data?.customerSync} />
+        </div>
       </div>
 
       {/* Stat cards — 2 kolom mobile, 3 tablet, 6 desktop */}
