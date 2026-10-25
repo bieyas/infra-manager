@@ -15,6 +15,20 @@ import { useToast } from '../../context/ToastContext'
 import { useAuth } from '../../context/AuthContext'
 import { api } from '../../lib/api'
 
+function getPortalBaseUrl() {
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return 'https://portal.fastkho.online'
+  }
+  return `http://${window.location.hostname}:3392`
+}
+
+function getPortalWsUrl() {
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return 'wss://portal.fastkho.online/ws'
+  }
+  return `ws://${window.location.hostname}:3392/ws`
+}
+
 export default function HelpdeskPage() {
   const { user } = useAuth()
   const { showToast } = useToast()
@@ -79,7 +93,7 @@ export default function HelpdeskPage() {
   useEffect(() => {
     if (!portalToken) return
 
-    const wsUrl = `ws://${window.location.hostname}:3392/ws`
+    const wsUrl = getPortalWsUrl()
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
 
@@ -250,7 +264,7 @@ export default function HelpdeskPage() {
     try {
       const res = await api.post(`/helpdesk/impersonate/${pelangganId}`)
       if (res?.success && res.token) {
-        const portalUrl = `http://${window.location.hostname}:3392/?impersonate_token=${encodeURIComponent(res.token)}`
+        const portalUrl = `${getPortalBaseUrl()}/?impersonate_token=${encodeURIComponent(res.token)}`
         window.open(portalUrl, '_blank')
         showToast?.({ title: `Membuka sesi impersonate pelanggan ${pelangganId}`, type: 'success' })
       }
@@ -303,7 +317,7 @@ export default function HelpdeskPage() {
             variant="outline"
             size="sm"
             icon={ExternalLink}
-            onClick={() => window.open(`http://${window.location.hostname}:3392/`, '_blank')}
+            onClick={() => window.open(getPortalBaseUrl(), '_blank')}
           >
             Buka Portal Pelanggan ↗
           </Button>
