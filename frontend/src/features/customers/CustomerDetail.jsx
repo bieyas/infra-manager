@@ -4,10 +4,20 @@ import {
   Network, Hash, Loader2, AlertCircle, ExternalLink, Copy, Router, Activity,
 } from 'lucide-react'
 import Badge from '../../components/ui/Badge'
-import TrafficAreaChart from '../../components/ui/TrafficAreaChart'
+import TrafficAreaChart, { formatSpeed } from '../../components/ui/TrafficAreaChart'
 import { useCustomerDetail, STATUS_CFG, CONNECTION_CFG } from './useCustomers'
 import { useToast } from '../../context/ToastContext'
 import { api } from '../../lib/api'
+
+function formatClock(date, withSeconds = false) {
+  const d = new Date(date)
+  if (Number.isNaN(d.getTime())) return ''
+  const h = String(d.getHours()).padStart(2, '0')
+  const m = String(d.getMinutes()).padStart(2, '0')
+  if (!withSeconds) return `${h}:${m}`
+  const s = String(d.getSeconds()).padStart(2, '0')
+  return `${h}:${m}:${s}`
+}
 
 function Row({ label, value, mono = false }) {
   if (!value && value !== 0) return null
@@ -107,13 +117,12 @@ export default function CustomerDetail({ customerId, onClose }) {
       .then(result => {
         if (cancelled) return
         const mapped = (result.samples || []).map(sample => ({
-          time: new Date(sample.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+          time: formatClock(sample.timestamp, false),
           in: Number(sample.inBps || 0) / 1_000_000,
           out: Number(sample.outBps || 0) / 1_000_000,
         }))
         if (mapped.length === 1) {
-          const prevTime = new Date(new Date(result.samples[0].timestamp).getTime() - 5 * 60 * 1000)
-            .toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+          const prevTime = formatClock(new Date(result.samples[0].timestamp).getTime() - 5 * 60 * 1000, false)
           mapped.unshift({ time: prevTime, in: mapped[0].in, out: mapped[0].out })
         }
         setTrafficSeries(mapped)
@@ -142,7 +151,7 @@ export default function CustomerDetail({ customerId, onClose }) {
           if (Number.isNaN(timestamp.getTime())) throw new Error('Timestamp data live tidak valid')
           const nextPoint = {
             timestamp: timestamp.getTime(),
-            time: timestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            time: formatClock(timestamp, true),
             in: Number(point.inBps || 0) / 1_000_000,
             out: Number(point.outBps || 0) / 1_000_000,
           }
@@ -244,56 +253,105 @@ export default function CustomerDetail({ customerId, onClose }) {
           {c && (
             <>
               <Section title="Trafik PPPoE" icon={Activity}>
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted font-mono truncate">pppoe-{c.pppoeUsername}</span>
-                    {trafficMode === 'live' && livePoint && (
-                      <div className="flex items-center gap-1.5 text-[10px]">
-                        <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono font-medium">
-                          ⬆ {livePoint.in.toFixed(2)} Mbps
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono font-medium">
-                          ⬇ {livePoint.out.toFixed(2)} Mbps
-                        </span>
-                      </div>
-                    )}
-                    {trafficMode === 'history' && trafficSeries.length > 0 && (
-                      <div className="flex items-center gap-1.5 text-[10px]">
-                        <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono">
-                          ⬆ {trafficSeries[trafficSeries.length - 1].in.toFixed(2)} Mbps
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono">
-                          ⬇ {trafficSeries[trafficSeries.length - 1].out.toFixed(2)} Mbps
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <button type="button" onClick={() => setTrafficMode('history')} className={`text-[10px] px-2 py-1 rounded border ${trafficMode === 'history' ? 'bg-[var(--accent-glow)] border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--border)] text-muted'}`}>Histori</button>
-                    <button type="button" onClick={() => setTrafficMode('live')} className={`text-[10px] px-2 py-1 rounded border ${trafficMode === 'live' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 flex items-center gap-1' : 'border-[var(--border)] text-muted'}`}>
-                      {trafficMode === 'live' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                {/* Header Controls */}
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="text-[11px] text-muted font-mono truncate">
+                    pppoe-{c.pppoeUsername}
+                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setTrafficMode('history')}
+                      className={`text-[10px] px-2 py-0.5 rounded border font-medium ${
+                        trafficMode === 'history'
+                          ? 'bg-[var(--accent-glow)] border-[var(--accent)] text-[var(--accent)]'
+                          : 'border-[var(--border)] text-muted hover:text-primary'
+                      }`}
+                    >
+                      Histori
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTrafficMode('live')}
+                      className={`text-[10px] px-2 py-0.5 rounded border font-medium flex items-center gap-1 ${
+                        trafficMode === 'live'
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                          : 'border-[var(--border)] text-muted hover:text-primary'
+                      }`}
+                    >
+                      {trafficMode === 'live' && (
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      )}
                       Live
                     </button>
-                    {trafficMode === 'live' && <select value={liveInterval} onChange={event => setLiveInterval(Number(event.target.value))} className="text-[10px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1.5 py-1 text-primary" aria-label="Interval polling trafik live">
-                      <option value={1}>1s</option>
-                      <option value={2}>2s</option>
-                      <option value={5}>5s</option>
-                    </select>}
-                    {trafficMode === 'history' && <select value={trafficRange} onChange={event => setTrafficRange(event.target.value)} className="text-[10px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1.5 py-1 text-primary" aria-label="Rentang grafik trafik">
-                      <option value="1h">1 jam</option>
-                      <option value="6h">6 jam</option>
-                      <option value="24h">24 jam</option>
-                      <option value="7d">7 hari</option>
-                      <option value="30d">30 hari</option>
-                    </select>}
+                    {trafficMode === 'live' && (
+                      <select
+                        value={liveInterval}
+                        onChange={event => setLiveInterval(Number(event.target.value))}
+                        className="text-[10px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1.5 py-0.5 text-primary font-mono"
+                        aria-label="Interval polling"
+                      >
+                        <option value={1}>1s</option>
+                        <option value={2}>2s</option>
+                        <option value={5}>5s</option>
+                      </select>
+                    )}
+                    {trafficMode === 'history' && (
+                      <select
+                        value={trafficRange}
+                        onChange={event => setTrafficRange(event.target.value)}
+                        className="text-[10px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1.5 py-0.5 text-primary"
+                        aria-label="Rentang grafik"
+                      >
+                        <option value="1h">1 jam</option>
+                        <option value="6h">6 jam</option>
+                        <option value="24h">24 jam</option>
+                        <option value="7d">7 hari</option>
+                        <option value="30d">30 hari</option>
+                      </select>
+                    )}
                   </div>
                 </div>
-                <div className="min-h-[180px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] overflow-hidden flex items-center justify-center">
+
+                {/* Prominent Bandwidth KPIs */}
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <div className="bg-[var(--bg-secondary)] border border-cyan-500/25 rounded-lg px-2.5 py-1.5 flex flex-col justify-center">
+                    <span className="text-[9px] text-cyan-400 font-semibold tracking-wider uppercase">
+                      ⬆ Upload (TX)
+                    </span>
+                    <span className="text-sm font-mono font-bold text-cyan-400 mt-0.5 truncate">
+                      {formatSpeed(
+                        trafficMode === 'live'
+                          ? livePoint?.in ?? 0
+                          : trafficSeries[trafficSeries.length - 1]?.in ?? 0
+                      )}
+                    </span>
+                  </div>
+                  <div className="bg-[var(--bg-secondary)] border border-amber-500/25 rounded-lg px-2.5 py-1.5 flex flex-col justify-center">
+                    <span className="text-[9px] text-amber-400 font-semibold tracking-wider uppercase">
+                      ⬇ Download (RX)
+                    </span>
+                    <span className="text-sm font-mono font-bold text-amber-400 mt-0.5 truncate">
+                      {formatSpeed(
+                        trafficMode === 'live'
+                          ? livePoint?.out ?? 0
+                          : trafficSeries[trafficSeries.length - 1]?.out ?? 0
+                      )}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Chart Box */}
+                <div className="min-h-[185px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] overflow-hidden flex items-center justify-center p-1">
                   {trafficLoading && <Loader2 size={18} className="animate-spin text-[var(--accent)]" />}
                   {!trafficLoading && (trafficMode === 'live' ? Boolean(livePoint) : trafficSeries.length > 0) && (
                     <TrafficAreaChart data={trafficMode === 'live' ? liveSeries : trafficSeries} />
                   )}
-                  {!trafficLoading && (trafficMode === 'live' ? !livePoint : trafficSeries.length === 0) && <span className="text-[10px] text-muted text-center px-4">{trafficError || (trafficMode === 'live' ? 'Menunggu data live dari perangkat...' : 'Belum ada sample trafik. Collector berjalan setiap 5 menit.')}</span>}
+                  {!trafficLoading && (trafficMode === 'live' ? !livePoint : trafficSeries.length === 0) && (
+                    <span className="text-[10px] text-muted text-center px-4">
+                      {trafficError || (trafficMode === 'live' ? 'Menghubungkan ke router untuk data realtime...' : 'Belum ada data sampel histori.')}
+                    </span>
+                  )}
                 </div>
               </Section>
 
