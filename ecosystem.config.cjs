@@ -36,5 +36,23 @@ module.exports = {
       out_file: '/home/basuki/infra-manager/logs/frontend-out.log',
       merge_logs: true,
     },
+    {
+      name: 'infra-portal',
+      script: 'src/server.js',
+      cwd: '/home/basuki/infra-manager/portal/backend',
+      interpreter: 'node',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3392,
+      },
+      watch: false,
+      max_memory_restart: '512M',
+      restart_delay: 2000,
+      max_restarts: 10,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      error_file: '/home/basuki/infra-manager/logs/portal-error.log',
+      out_file: '/home/basuki/infra-manager/logs/portal-out.log',
+      merge_logs: true,
+    },
   ],
 }

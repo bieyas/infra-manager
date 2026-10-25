@@ -58,3 +58,8 @@ check_*.js
 *.backup
 *.dump
 backend/data/
+
+# Portal Pelanggan
+portal/backend/data/
+portal/**/*.db*
+
