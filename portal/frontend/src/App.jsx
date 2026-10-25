@@ -5,7 +5,7 @@ import {
   Search, RefreshCw, Send, HelpCircle, Laptop, Eye, EyeOff, Radio,
   Tv, MousePointer, XCircle, Play, Square, Sparkles, Navigation,
   LayoutDashboard, Server, Activity, Wrench, ChevronRight, UserRound,
-  TrendingUp, TrendingDown, Bell, BellRing, Cable
+  TrendingUp, TrendingDown, Bell, BellRing, Cable, Camera, Video
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -41,6 +41,7 @@ export default function App() {
   const [helpState, setHelpState] = useState('idle') // 'idle', 'waiting', 'connected'
   const [activeStaffName, setActiveStaffName] = useState('')
   const [isSharingScreen, setIsSharingScreen] = useState(false)
+  const [streamSource, setStreamSource] = useState(null) // null, 'camera', 'screen'
   const [visualGuidance, setVisualGuidance] = useState(null) // { text, action, timestamp }
   
   // Customer Tickets
@@ -67,6 +68,7 @@ export default function App() {
   // WebRTC & WebSocket References
   const wsRef = useRef(null)
   const localStreamRef = useRef(null)
+  const localVideoRef = useRef(null)
   const pcRef = useRef(null)
   const remoteVideoRef = useRef(null)
 
@@ -167,29 +169,74 @@ export default function App() {
     }
   }, [custToken, staffToken, isAdminView, liveStudio])
 
-  // ── 2. WEBRTC ENGINE (SCREEN SHARING) ───────────────────────────────────────
+  // ── 2. WEBRTC ENGINE (SCREEN & CAMERA STREAMING) ───────────────────────────
   const stopWebRtc = () => {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(t => t.stop())
       localStreamRef.current = null
+    }
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null
     }
     if (pcRef.current) {
       pcRef.current.close()
       pcRef.current = null
     }
     setIsSharingScreen(false)
+    setStreamSource(null)
     setRemoteStreamReceived(false)
   }
 
-  const handleStartScreenShare = async () => {
+  // Effect to bind local camera viewfinder preview when streaming
+  useEffect(() => {
+    if (isSharingScreen && localStreamRef.current && localVideoRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current
+    }
+  }, [isSharingScreen, streamSource])
+
+  const handleStartMediaStream = async (type = 'camera') => {
     try {
-      if (!navigator.mediaDevices?.getDisplayMedia) {
-        alert('Browser ini menggunakan Mode Panduan Visual (Co-Browsing & Laser Pointer). Sesi panduan langsung CS tetap aktif!')
-        return
+      let stream = null
+      if (type === 'camera') {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          alert('Fitur kamera tidak didukung pada peramban ini.')
+          return
+        }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: 'environment' },
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            },
+            audio: false
+          })
+        } catch (camErr) {
+          console.error('Camera error:', camErr)
+          alert('Izin kamera ditolak atau kamera sedang dipakai aplikasi lain. Mohon izinkan akses kamera agar teknisi dapat melihat modem/ONT Anda.')
+          return
+        }
+      } else {
+        // Screen share
+        if (!navigator.mediaDevices?.getDisplayMedia) {
+          alert('Perekaman layar smartphone (iOS Safari / Android In-App WebView) dibatasi oleh sistem operasi demi keamanan privasi.\n\nSilakan gunakan tombol "📷 Sorot Lampu Modem" untuk memperlihatkan modem Anda ke teknisi, atau nikmati Mode Petunjuk Visual yang tetap aktif otomatis!')
+          return
+        }
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+        } catch (mediaErr) {
+          if (mediaErr.name === 'NotSupportedError' || mediaErr.name === 'AbortError' || mediaErr.name === 'NotAllowedError') {
+            alert('Perekaman layar dibatalkan atau dibatasi oleh sistem browser HP.\n\nSilakan beralih ke tombol "📷 Sorot Lampu Modem" untuk memperlihatkan modem langsung ke teknisi.')
+            return
+          }
+          throw mediaErr
+        }
       }
 
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+      if (!stream) return
+
       localStreamRef.current = stream
+      setStreamSource(type)
       setIsSharingScreen(true)
 
       const pc = new RTCPeerConnection(rtcConfig)
@@ -222,10 +269,14 @@ export default function App() {
         }))
       }
     } catch (err) {
-      console.warn('Screen share cancelled/failed:', err)
+      console.warn('Media share failed:', err)
       setIsSharingScreen(false)
+      setStreamSource(null)
     }
   }
+
+  const handleStartScreenShare = () => handleStartMediaStream('screen')
+  const handleStartCameraShare = () => handleStartMediaStream('camera')
 
   const handleStopScreenShare = () => {
     stopWebRtc()
@@ -1197,15 +1248,24 @@ export default function App() {
                 <div className="lg:col-span-7 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between min-h-[320px]">
                   <div>
                     <div className="flex items-center justify-between mb-3">
-                      <span className="text-xs font-bold text-[var(--text-primary)] flex items-center gap-1.5">
-                        <Tv size={14} className="text-[var(--accent)]" /> Pantauan Layar WebRTC (Live Stream)
+                      <span className="text-xs font-bold text-white flex items-center gap-2">
+                        <Tv size={15} className="text-cyan-400" />
+                        <Camera size={15} className="text-emerald-400" />
+                        Pantauan Layar & Kamera Pelanggan (Live Stream)
                       </span>
-                      {remoteStreamReceived && (
-                        <Badge variant="online" className="mono">LIVE 60FPS</Badge>
+                      {remoteStreamReceived ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 flex items-center gap-1.5 animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                          LIVE STREAM (60 FPS)
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono text-slate-400 bg-slate-800 border border-slate-700">
+                          STANDBY
+                        </span>
                       )}
                     </div>
 
-                    <div className="relative rounded-lg overflow-hidden bg-black/60 border border-[var(--border)] aspect-video flex items-center justify-center">
+                    <div className="relative rounded-lg overflow-hidden bg-black/90 border border-slate-700 aspect-video flex items-center justify-center">
                       <video
                         ref={remoteVideoRef}
                         autoPlay
@@ -1213,15 +1273,17 @@ export default function App() {
                         className={clsx('w-full h-full object-contain', remoteStreamReceived ? 'block' : 'hidden')}
                       />
                       {!remoteStreamReceived && (
-                        <div className="text-center p-6 space-y-2">
-                          <Radio className="w-10 h-10 text-[var(--accent)] mx-auto animate-pulse" />
-                          <p className="text-xs font-semibold text-white">
+                        <div className="text-center p-6 space-y-2.5 max-w-sm mx-auto">
+                          <div className="w-12 h-12 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center mx-auto text-cyan-400">
+                            <Radio className="w-6 h-6 animate-pulse" />
+                          </div>
+                          <p className="text-sm font-semibold text-slate-100">
                             {studioConnected
-                              ? 'Sesi tersambung! Menunggu pelanggan menekan tombol "Bagikan Layar"'
-                              : 'Klik tombol hijau di atas untuk menghubungkan sesi'}
+                              ? 'Menunggu Pelanggan Mengaktifkan Layar / Kamera HP'
+                              : 'Klik tombol di atas untuk menghubungkan sesi'}
                           </p>
-                          <p className="text-[11px] text-[var(--text-muted)] max-w-xs mx-auto">
-                            Atau gunakan tombol Petunjuk Visual di sebelah kanan untuk langsung menunjuk tombol di ponsel pelanggan.
+                          <p className="text-xs text-slate-300 leading-relaxed">
+                            Pelanggan di HP dapat menekan <strong>"📷 Sorot Modem"</strong> untuk memperlihatkan lampu ONT/Router ke teknisi, atau gunakan <strong>Petunjuk Visual</strong> di sebelah kanan.
                           </p>
                         </div>
                       )}
@@ -1488,7 +1550,7 @@ export default function App() {
                       <h4 className="text-xs font-bold text-emerald-300">
                         🟢 Terhubung: {activeStaffName}
                       </h4>
-                      <p className="text-[10px] text-[var(--text-secondary)]">Tim Support sedang memandu Anda.</p>
+                      <p className="text-[10px] text-slate-300">Tim Support sedang memandu Anda (Mode Laser Pointer Aktif).</p>
                     </div>
                   </div>
                   <Button variant="ghost" size="xs" onClick={handleEndHelpSession}>
@@ -1496,26 +1558,56 @@ export default function App() {
                   </Button>
                 </div>
 
+                {/* Local Camera Viewfinder Preview */}
+                {isSharingScreen && (
+                  <div className="relative rounded-lg overflow-hidden border border-emerald-500/40 bg-black aspect-video max-h-48 mx-auto shadow-md">
+                    <video
+                      ref={localVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute top-2 left-2 bg-emerald-600/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                      {streamSource === 'camera' ? '📷 KAMERA MODEM AKTIF' : '🖥️ LAYAR AKTIF'}
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   {!isSharingScreen ? (
-                    <Button
-                      variant="success"
-                      size="sm"
-                      icon={Tv}
-                      onClick={handleStartScreenShare}
-                      className="font-bold"
-                    >
-                      Bagikan Layar
-                    </Button>
+                    <>
+                      <Button
+                        variant="success"
+                        size="sm"
+                        icon={Camera}
+                        onClick={handleStartCameraShare}
+                        className="font-bold text-xs shadow-sm"
+                        title="Nyalakan kamera HP untuk memperlihatkan lampu modem ke teknisi"
+                      >
+                        📷 Sorot Modem
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        icon={Tv}
+                        onClick={handleStartScreenShare}
+                        className="font-bold text-xs"
+                        title="Bagikan layar perangkat Anda ke teknisi"
+                      >
+                        🖥️ Bagikan Layar
+                      </Button>
+                    </>
                   ) : (
                     <Button
                       variant="danger"
                       size="sm"
                       icon={Square}
                       onClick={handleStopScreenShare}
-                      className="font-bold"
+                      className="font-bold col-span-1"
                     >
-                      Stop Bagikan
+                      Stop Siaran
                     </Button>
                   )}
 
@@ -1523,6 +1615,7 @@ export default function App() {
                     variant="outline"
                     size="sm"
                     onClick={handleEndHelpSession}
+                    className={clsx(!isSharingScreen ? 'col-span-2' : 'col-span-1')}
                   >
                     Selesai Dipandu
                   </Button>

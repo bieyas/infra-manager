@@ -3,7 +3,7 @@ import {
   Laptop, Tv, MessageSquare, QrCode, Clock, Shield, Eye,
   RefreshCw, Search, CheckCircle2, Navigation, AlertCircle,
   Radio, UserRound, Phone, LogOut, Square, ExternalLink,
-  ChevronRight, Wrench, AlertTriangle, Users
+  ChevronRight, Wrench, AlertTriangle, Users, KeyRound, Camera, Send
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -451,15 +451,15 @@ export default function HelpdeskPage() {
           </CardHeader>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-[var(--text-secondary)]">
-              <thead className="bg-[var(--bg-secondary)]/70 text-muted border-b border-[var(--border)] uppercase text-[10px] mono">
+            <table className="w-full text-left text-xs text-slate-200">
+              <thead className="bg-[var(--bg-secondary)] text-slate-300 border-b border-[var(--border)] uppercase text-[11px] font-semibold mono">
                 <tr>
-                  <th className="py-2.5 px-4">ID Pelanggan</th>
-                  <th className="py-2.5 px-4">Nama Pelanggan</th>
-                  <th className="py-2.5 px-4">Paket & Alamat</th>
-                  <th className="py-2.5 px-4">Status Password</th>
-                  <th className="py-2.5 px-4">Bantuan Layar Live</th>
-                  <th className="py-2.5 px-4 text-right">Aksi Manajemen</th>
+                  <th className="py-3 px-4">ID Pelanggan</th>
+                  <th className="py-3 px-4">Nama Pelanggan</th>
+                  <th className="py-3 px-4">Paket & Alamat</th>
+                  <th className="py-3 px-4">Status Sandi</th>
+                  <th className="py-3 px-4">Bantuan Layar Live</th>
+                  <th className="py-3 px-4 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
@@ -470,65 +470,78 @@ export default function HelpdeskPage() {
                       key={c.id}
                       className={clsx(
                         'hover:bg-[var(--accent-glow)]/40 transition-colors',
-                        c.help_status === 'requesting' && 'bg-emerald-950/20'
+                        c.help_status === 'requesting' && 'bg-emerald-950/25'
                       )}
                     >
-                      <td className="py-3 px-4 mono font-bold accent-text">
+                      <td className="py-3.5 px-4 mono font-bold text-cyan-400">
                         {c.pelanggan_id}
                       </td>
-                      <td className="py-3 px-4">
-                        <span className="font-semibold text-white block">{c.nama_lengkap}</span>
-                        <span className="text-[10px] text-muted mono">{c.phone || '-'}</span>
+                      <td className="py-3.5 px-4">
+                        <span className="font-semibold text-white block text-sm">{c.nama_lengkap}</span>
+                        <span className="text-xs text-slate-400 mono block mt-0.5">{c.phone || '-'}</span>
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-3.5 px-4">
                         <span className="text-white block font-medium">{c.paket_name || '5 Mbps Home'}</span>
-                        <span className="text-[10px] text-muted truncate max-w-[220px] block">{c.alamat || '-'}</span>
+                        <span className="text-xs text-slate-400 truncate max-w-[240px] block mt-0.5">{c.alamat || '-'}</span>
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-3.5 px-4">
                         {c.is_custom_password ? (
-                          <Badge variant="online">Mandiri</Badge>
+                          <Badge variant="online" className="text-[11px]">Mandiri</Badge>
                         ) : (
-                          <Badge variant="warning">Default 12345678</Badge>
+                          <Badge variant="warning" className="text-[11px]">Default 12345678</Badge>
                         )}
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-3.5 px-4">
                         {c.help_status === 'requesting' ? (
                           <button
                             onClick={() => handleOpenStudio(c)}
-                            className="px-3 py-1.5 rounded-full bg-emerald-500 text-slate-950 font-bold text-[10px] flex items-center gap-1.5 shadow-lg shadow-emerald-500/30 animate-pulse hover:bg-emerald-400 transition"
+                            title="Pelanggan Meminta Bantuan Layar — Klik untuk Hubungkan"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/30 transition text-xs font-semibold shadow-sm animate-pulse"
                           >
-                            <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
-                            🟢 BUTUH PANDUAN LAYAR (KLIK DISINI)
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                            </span>
+                            <Radio size={14} className="text-emerald-400" />
+                            <span>Butuh Bantuan</span>
                           </button>
                         ) : c.help_status === 'active' ? (
                           <button
                             onClick={() => handleOpenStudio(c)}
-                            className="px-3 py-1.5 rounded-full bg-[var(--accent)] text-slate-950 font-bold text-[10px] flex items-center gap-1.5 shadow-md hover:brightness-110 transition"
+                            title="Sesi Bantuan Aktif — Buka Studio Kontrol"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/25 transition text-xs font-semibold shadow-sm group"
                           >
-                            <StatusDot status="online" size="sm" />
-                            🔵 SESI TERHUBUNG (KONTROL)
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                            </span>
+                            <Tv size={14} className="text-cyan-400 group-hover:scale-110 transition" />
+                            <span>Studio Kontrol</span>
                           </button>
                         ) : (
-                          <span className="text-muted text-[10px]">⚪ Tidak ada permintaan</span>
+                          <span className="text-slate-500 text-xs flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+                            Standby
+                          </span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-right space-x-2">
-                        <Button
-                          variant="outline"
-                          size="xs"
-                          icon={Eye}
-                          onClick={() => handleImpersonate(c.pelanggan_id)}
-                          title="Buka sesi akun pelanggan di tab baru"
-                        >
-                          Impersonate
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="xs"
-                          onClick={() => handleResetPassword(c)}
-                        >
-                          Reset
-                        </Button>
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="inline-flex items-center gap-1.5 justify-end">
+                          <button
+                            onClick={() => handleImpersonate(c.pelanggan_id)}
+                            title="Buka Portal Pelanggan (Impersonate)"
+                            className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] hover:border-cyan-500/60 hover:bg-cyan-500/10 text-slate-300 hover:text-cyan-400 transition inline-flex items-center justify-center shadow-sm"
+                          >
+                            <ExternalLink size={15} />
+                          </button>
+                          <button
+                            onClick={() => handleResetPassword(c)}
+                            title="Reset Password Default (12345678)"
+                            className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] hover:border-amber-500/60 hover:bg-amber-500/10 text-slate-300 hover:text-amber-400 transition inline-flex items-center justify-center shadow-sm"
+                          >
+                            <KeyRound size={15} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -549,42 +562,43 @@ export default function HelpdeskPage() {
           </CardHeader>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-[var(--text-secondary)]">
-              <thead className="bg-[var(--bg-secondary)]/70 text-muted uppercase text-[10px] mono">
+            <table className="w-full text-left text-xs text-slate-200">
+              <thead className="bg-[var(--bg-secondary)] text-slate-300 border-b border-[var(--border)] uppercase text-[11px] font-semibold mono">
                 <tr>
-                  <th className="py-2.5 px-4">No. Tiket</th>
-                  <th className="py-2.5 px-4">Pelanggan</th>
-                  <th className="py-2.5 px-4">Kategori & Judul</th>
-                  <th className="py-2.5 px-4">Status</th>
-                  <th className="py-2.5 px-4">Petugas</th>
-                  <th className="py-2.5 px-4 text-right">Aksi</th>
+                  <th className="py-3 px-4">No. Tiket</th>
+                  <th className="py-3 px-4">Pelanggan</th>
+                  <th className="py-3 px-4">Kategori & Judul</th>
+                  <th className="py-3 px-4">Status</th>
+                  <th className="py-3 px-4">Petugas</th>
+                  <th className="py-3 px-4 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
                 {tickets.map(t => (
                   <tr key={t.id} className="hover:bg-[var(--accent-glow)]/40 transition-colors">
-                    <td className="py-3 px-4 font-mono font-bold accent-text">{t.ticket_number}</td>
-                    <td className="py-3 px-4">
-                      <span className="font-semibold text-white block">{t.nama_lengkap}</span>
-                      <span className="text-[10px] text-muted mono">ID: {t.pelanggan_id}</span>
+                    <td className="py-3.5 px-4 font-mono font-bold text-cyan-400">{t.ticket_number}</td>
+                    <td className="py-3.5 px-4">
+                      <span className="font-semibold text-white block text-sm">{t.nama_lengkap}</span>
+                      <span className="text-xs text-slate-400 mono block mt-0.5">ID: {t.pelanggan_id}</span>
                     </td>
-                    <td className="py-3 px-4">
-                      <span className="font-semibold text-white block">{t.judul}</span>
-                      <span className="text-[10px] text-muted line-clamp-1">{t.deskripsi}</span>
+                    <td className="py-3.5 px-4">
+                      <span className="font-semibold text-white block text-xs">{t.judul}</span>
+                      <span className="text-xs text-slate-400 line-clamp-1 mt-0.5">{t.deskripsi}</span>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="py-3.5 px-4">
                       <Badge variant={t.status === 'open' ? 'warning' : 'online'}>
-                        {t.status}
+                        {t.status === 'open' ? 'OPEN' : 'RESOLVED'}
                       </Badge>
                     </td>
-                    <td className="py-3 px-4 text-muted">
+                    <td className="py-3.5 px-4 text-xs text-slate-300">
                       {t.assigned_staff_name || 'Belum ditugaskan'}
                     </td>
-                    <td className="py-3 px-4 text-right">
+                    <td className="py-3.5 px-4 text-right">
                       <Button
-                        variant="outline"
+                        variant={t.status === 'open' ? 'primary' : 'outline'}
                         size="xs"
                         onClick={() => handleToggleTicket(t)}
+                        className="font-medium"
                       >
                         {t.status === 'open' ? 'Tandai Selesai' : 'Buka Kembali'}
                       </Button>
@@ -616,24 +630,25 @@ export default function HelpdeskPage() {
       {/* ── STUDIO MODAL: REMOTE ASSISTANCE & WEBRTC ─────────────────────────── */}
       {liveStudio && (
         <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <Card className="max-w-4xl w-full p-6 shadow-2xl space-y-5 flex flex-col max-h-[92vh] overflow-y-auto !bg-[var(--bg-card)] border-[var(--border)] glow-ring">
+          <Card className="max-w-4xl w-full p-6 shadow-2xl space-y-5 flex flex-col max-h-[92vh] overflow-y-auto !bg-slate-900 border-slate-700 glow-ring">
             
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
+            <div className="flex items-center justify-between border-b border-slate-700/80 pb-4">
               <div className="flex items-center gap-3">
                 <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center"
-                  style={{ background: 'var(--accent)', boxShadow: '0 0 16px var(--accent-glow)' }}
+                  className="w-10 h-10 rounded-xl flex items-center justify-center bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-md shadow-cyan-500/10"
                 >
-                  <Laptop size={20} className="text-slate-950" />
+                  <Tv size={20} />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    Studio Remote Assistance: {liveStudio.nama_lengkap}
-                    <Badge variant="accent" className="mono">ID: {liveStudio.pelanggan_id}</Badge>
+                    Studio Remote Assistance: <span className="text-cyan-300">{liveStudio.nama_lengkap}</span>
+                    <span className="px-2 py-0.5 rounded text-xs font-mono font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-800">
+                      ID: {liveStudio.pelanggan_id}
+                    </span>
                   </h3>
-                  <p className="text-xs text-muted">
-                    Paket: {liveStudio.paket_name || '5 Mbps'} • Alamat: {liveStudio.alamat || 'Area Jombang'}
+                  <p className="text-xs text-slate-300 mt-0.5">
+                    Paket: <strong className="text-white">{liveStudio.paket_name || '5 Mbps'}</strong> • Alamat: <span className="text-slate-300">{liveStudio.alamat || 'Area Jombang'}</span>
                   </p>
                 </div>
               </div>
@@ -642,21 +657,29 @@ export default function HelpdeskPage() {
                   setLiveStudio(null)
                   stopWebRtc()
                 }}
-                className="p-1.5 rounded-lg bg-[var(--bg-secondary)] hover:bg-[var(--border)] text-muted hover:text-white"
+                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-red-500/20 border border-slate-700 hover:border-red-500/40 text-slate-400 hover:text-red-300 flex items-center justify-center transition"
+                title="Tutup Studio"
               >
                 ✕
               </button>
             </div>
 
             {/* Connection Status Bar */}
-            <div className="flex items-center justify-between p-3.5 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border)]">
-              <div className="flex items-center gap-2.5">
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-800/80 border border-slate-700">
+              <div className="flex items-center gap-3">
                 <StatusDot status={studioConnected ? 'online' : 'warning'} pulse={true} size="md" />
-                <span className="text-xs font-semibold text-white">
-                  {studioConnected
-                    ? '🟢 Sesi Interaktif Aktif Terhubung dengan Pelanggan'
-                    : '🟡 Pelanggan Meminta Bantuan — Klik tombol untuk menghubungkan'}
-                </span>
+                <div>
+                  <span className="text-xs font-semibold text-white block">
+                    {studioConnected
+                      ? '🟢 Sesi Interaktif Terhubung dengan Layar / HP Pelanggan'
+                      : '🟡 Pelanggan Menunggu Bantuan — Klik tombol untuk mulai memandu'}
+                  </span>
+                  <span className="text-[11px] text-slate-300">
+                    {studioConnected
+                      ? 'Perintah panduan visual & laser pointer dapat langsung dikirim.'
+                      : 'Setelah terhubung, pelanggan dapat membagikan layar atau kamera HP.'}
+                  </span>
+                </div>
               </div>
               {!studioConnected ? (
                 <Button
@@ -664,7 +687,7 @@ export default function HelpdeskPage() {
                   size="sm"
                   icon={CheckCircle2}
                   onClick={handleAcceptHelp}
-                  className="font-bold"
+                  className="font-bold shadow-md shadow-cyan-500/20"
                 >
                   Hubungkan Sesi Sekarang
                 </Button>
@@ -683,18 +706,27 @@ export default function HelpdeskPage() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               
               {/* Left: WebRTC Live Screen Viewer */}
-              <div className="lg:col-span-7 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 flex flex-col justify-between min-h-[320px]">
+              <div className="lg:col-span-7 bg-slate-800/60 border border-slate-700 rounded-xl p-4 flex flex-col justify-between min-h-[340px]">
                 <div>
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-bold text-primary flex items-center gap-1.5">
-                      <Tv size={14} className="accent-text" /> Pantauan Layar WebRTC (Live Stream)
+                    <span className="text-xs font-bold text-white flex items-center gap-2">
+                      <Tv size={15} className="text-cyan-400" />
+                      <Camera size={15} className="text-emerald-400" />
+                      Pantauan Layar & Kamera Pelanggan (Live Stream)
                     </span>
-                    {remoteStreamReceived && (
-                      <Badge variant="online" className="mono">LIVE 60FPS</Badge>
+                    {remoteStreamReceived ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 flex items-center gap-1.5 animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        LIVE STREAM (60 FPS)
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-mono text-slate-400 bg-slate-800 border border-slate-700">
+                        STANDBY
+                      </span>
                     )}
                   </div>
 
-                  <div className="relative rounded-lg overflow-hidden bg-black/60 border border-[var(--border)] aspect-video flex items-center justify-center">
+                  <div className="relative rounded-lg overflow-hidden bg-black/90 border border-slate-700 aspect-video flex items-center justify-center">
                     <video
                       ref={remoteVideoRef}
                       autoPlay
@@ -702,84 +734,96 @@ export default function HelpdeskPage() {
                       className={clsx('w-full h-full object-contain', remoteStreamReceived ? 'block' : 'hidden')}
                     />
                     {!remoteStreamReceived && (
-                      <div className="text-center p-6 space-y-2">
-                        <Radio className="w-10 h-10 accent-text mx-auto animate-pulse" />
-                        <p className="text-xs font-semibold text-white">
+                      <div className="text-center p-6 space-y-2.5 max-w-sm mx-auto">
+                        <div className="w-12 h-12 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center mx-auto text-cyan-400">
+                          <Radio className="w-6 h-6 animate-pulse" />
+                        </div>
+                        <p className="text-sm font-semibold text-slate-100">
                           {studioConnected
-                            ? 'Sesi tersambung! Menunggu pelanggan menekan tombol "Bagikan Layar"'
+                            ? 'Menunggu Pelanggan Mengaktifkan Layar / Kamera HP'
                             : 'Klik tombol di atas untuk menghubungkan sesi'}
                         </p>
-                        <p className="text-[11px] text-muted max-w-xs mx-auto">
-                          Atau gunakan tombol Petunjuk Visual di sebelah kanan untuk langsung menunjuk tombol di ponsel pelanggan.
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          Pelanggan di HP dapat menekan <strong>"📷 Sorot Lampu Modem"</strong> untuk menunjukkan lampu ONT/Router ke teknisi, atau gunakan <strong>Petunjuk Visual</strong> di sebelah kanan.
                         </p>
                       </div>
                     )}
                   </div>
                 </div>
 
-                <div className="pt-3 border-t border-[var(--border)] flex items-center justify-between text-[11px] text-muted mono">
-                  <span>Protokol: WebRTC P2P (STUN/WebSocket)</span>
-                  <span>Enkripsi: TLS / SRTP End-to-End</span>
+                <div className="pt-3 mt-3 border-t border-slate-700/80 flex items-center justify-between text-xs text-slate-400 mono">
+                  <span>Protokol: WebRTC P2P (Adaptive STUN/WS)</span>
+                  <span>Enkripsi: End-to-End TLS / DTLS-SRTP</span>
                 </div>
               </div>
 
               {/* Right: Co-Browsing Laser Pointer & Quick Controls */}
               <div className="lg:col-span-5 space-y-4 flex flex-col justify-between">
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 space-y-3">
-                  <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                    <Navigation size={14} className="accent-text" /> Petunjuk Visual (Co-Browsing Cepat)
-                  </h4>
-                  <p className="text-[11px] text-muted">
-                    Klik salah satu tombol untuk menunjuk langsung elemen di layar smartphone pelanggan:
-                  </p>
+                <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 space-y-3.5">
+                  <div>
+                    <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Navigation size={15} className="text-cyan-400" /> Petunjuk Visual (Co-Browsing Cepat)
+                    </h4>
+                    <p className="text-xs text-slate-300 mt-1">
+                      Klik salah satu tombol untuk menunjuk langsung elemen di layar smartphone pelanggan:
+                    </p>
+                  </div>
 
                   <div className="space-y-2">
                     <button
                       onClick={() => handleSendVisualGuide('point_qris', 'Klik di sini untuk Bayar Sekarang via QRIS 24 Jam')}
-                      className="w-full py-2 px-3 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--accent-glow)] border border-[var(--border)] text-left text-xs font-semibold text-white flex items-center justify-between transition group"
+                      className="w-full py-2.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-emerald-500/50 text-left text-xs font-medium text-slate-100 flex items-center justify-between transition group shadow-sm"
                     >
-                      <span className="flex items-center gap-2">
-                        <QrCode size={14} className="text-emerald-400" /> 1. Tunjuk Tombol QRIS
+                      <span className="flex items-center gap-2.5">
+                        <QrCode size={15} className="text-emerald-400" /> 1. Tunjuk Tombol QRIS
                       </span>
-                      <span className="text-[10px] accent-text opacity-0 group-hover:opacity-100 transition mono">Kirim 👉</span>
+                      <span className="text-[11px] font-mono font-medium text-emerald-400 bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-800/60 group-hover:bg-emerald-500 group-hover:text-slate-950 transition">
+                        Tunjuk 👉
+                      </span>
                     </button>
 
                     <button
                       onClick={() => handleSendVisualGuide('point_bills', 'Rincian dan riwayat tagihan bulanan Anda ada di sini')}
-                      className="w-full py-2 px-3 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--accent-glow)] border border-[var(--border)] text-left text-xs font-semibold text-white flex items-center justify-between transition group"
+                      className="w-full py-2.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-amber-500/50 text-left text-xs font-medium text-slate-100 flex items-center justify-between transition group shadow-sm"
                     >
-                      <span className="flex items-center gap-2">
-                        <Clock size={14} className="text-amber-400" /> 2. Tunjuk Menu Tagihan
+                      <span className="flex items-center gap-2.5">
+                        <Clock size={15} className="text-amber-400" /> 2. Tunjuk Menu Tagihan
                       </span>
-                      <span className="text-[10px] accent-text opacity-0 group-hover:opacity-100 transition mono">Kirim 👉</span>
+                      <span className="text-[11px] font-mono font-medium text-amber-400 bg-amber-950/50 px-2 py-0.5 rounded border border-amber-800/60 group-hover:bg-amber-500 group-hover:text-slate-950 transition">
+                        Tunjuk 👉
+                      </span>
                     </button>
 
                     <button
                       onClick={() => handleSendVisualGuide('point_tickets', 'Klik di sini jika ingin mengirim keluhan ke tim teknisi')}
-                      className="w-full py-2 px-3 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--accent-glow)] border border-[var(--border)] text-left text-xs font-semibold text-white flex items-center justify-between transition group"
+                      className="w-full py-2.5 px-3 rounded-lg bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-indigo-500/50 text-left text-xs font-medium text-slate-100 flex items-center justify-between transition group shadow-sm"
                     >
-                      <span className="flex items-center gap-2">
-                        <MessageSquare size={14} className="text-indigo-400" /> 3. Tunjuk Form Aduan Tiket
+                      <span className="flex items-center gap-2.5">
+                        <MessageSquare size={15} className="text-indigo-400" /> 3. Tunjuk Form Aduan Tiket
                       </span>
-                      <span className="text-[10px] accent-text opacity-0 group-hover:opacity-100 transition mono">Kirim 👉</span>
+                      <span className="text-[11px] font-mono font-medium text-indigo-400 bg-indigo-950/50 px-2 py-0.5 rounded border border-indigo-800/60 group-hover:bg-indigo-500 group-hover:text-slate-950 transition">
+                        Tunjuk 👉
+                      </span>
                     </button>
                   </div>
 
                   {/* Custom Text Guidance */}
-                  <div className="pt-2 border-t border-[var(--border)] space-y-1.5">
-                    <label className="text-[11px] font-semibold text-[var(--text-secondary)] block">Kirim Pesan Panduan Khusus</label>
+                  <div className="pt-2.5 border-t border-slate-700/80 space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-200 block">Kirim Pesan Panduan Khusus</label>
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        placeholder="Contoh: Buka aplikasi BCA Mobile ya Pak..."
+                        placeholder="Contoh: Buka aplikasi BCA Mobile / DANA ya Pak..."
                         value={customGuideText}
                         onChange={e => setCustomGuideText(e.target.value)}
-                        className="flex-1 px-3 py-1.5 rounded-lg bg-[var(--bg-card)] border border-[var(--border)] text-xs text-white focus:outline-none focus:border-[var(--accent)]"
+                        onKeyDown={e => e.key === 'Enter' && handleSendVisualGuide('custom')}
+                        className="flex-1 px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-cyan-500 transition"
                       />
                       <Button
                         variant="primary"
                         size="xs"
                         onClick={() => handleSendVisualGuide('custom')}
+                        className="font-semibold shadow-sm"
                       >
                         Kirim
                       </Button>
@@ -788,19 +832,19 @@ export default function HelpdeskPage() {
                 </div>
 
                 {/* Impersonate Shortcut */}
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 flex items-center justify-between">
+                <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-3.5 flex items-center justify-between">
                   <div>
-                    <span className="text-xs font-bold text-white block">Mode Kendali Langsung?</span>
-                    <span className="text-[10px] text-muted">Buka sesi pelanggan via impersonate</span>
+                    <span className="text-xs font-bold text-white block">Buka Portal Pelanggan (Impersonate)</span>
+                    <span className="text-[11px] text-slate-300">Buka akun di tab baru tanpa login manual</span>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    icon={Eye}
+                  <button
                     onClick={() => handleImpersonate(liveStudio.pelanggan_id)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/40 text-cyan-300 hover:text-white transition text-xs font-semibold shadow-sm"
+                    title="Buka sesi pelanggan via impersonate di tab baru"
                   >
-                    Impersonate
-                  </Button>
+                    <ExternalLink size={14} />
+                    <span>Buka Tab</span>
+                  </button>
                 </div>
               </div>
 
