@@ -97,6 +97,7 @@ export function initDatabase() {
       admin_id TEXT NOT NULL,
       admin_username TEXT NOT NULL,
       target_pelanggan_id TEXT NOT NULL,
+      reason TEXT,
       ip_address TEXT,
       user_agent TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP

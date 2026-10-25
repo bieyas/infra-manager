@@ -395,10 +395,22 @@ app.post('/api/admin/impersonate/:pelangganId', authenticateStaff, (req, res) =>
   }
 
   // Audit log
-  db.prepare(`
-    INSERT INTO impersonate_audit_logs (admin_id, admin_username, target_pelanggan_id, reason)
-    VALUES (?, ?, ?, ?)
-  `).run(req.staff.id, req.staff.username, targetPid, req.body?.reason || 'Bantuan Remote Helpdesk')
+  try {
+    const logId = `imp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`
+    db.prepare(`
+      INSERT INTO impersonate_audit_logs (id, admin_id, admin_username, target_pelanggan_id, reason, ip_address)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      logId,
+      req.staff?.id || 'staff-admin-1',
+      req.staff?.username || 'admin',
+      targetPid,
+      req.body?.reason || 'Bantuan Remote Helpdesk',
+      req.ip || '127.0.0.1'
+    )
+  } catch (auditErr) {
+    console.warn('[IMPERSONATE AUDIT WARNING]', auditErr.message)
+  }
 
   // Generate Impersonated Token (Masa berlaku 2 jam)
   const impersonateToken = jwt.sign({

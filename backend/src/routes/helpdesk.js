@@ -48,7 +48,7 @@ router.get('/dashboard', async (req, res) => {
       headers: { Authorization: `Bearer ${token}` }
     })
     const json = await response.json()
-    res.json(json)
+    res.status(response.status).json(json)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -64,7 +64,7 @@ router.get('/customers', async (req, res) => {
       headers: { Authorization: `Bearer ${token}` }
     })
     const json = await response.json()
-    res.json(json)
+    res.status(response.status).json(json)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -81,7 +81,7 @@ router.post('/customers/:pelangganId/reset-password', async (req, res) => {
       headers: { Authorization: `Bearer ${token}` }
     })
     const json = await response.json()
-    res.json(json)
+    res.status(response.status).json(json)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -102,7 +102,7 @@ router.post('/impersonate/:pelangganId', async (req, res) => {
       body: JSON.stringify({ reason: `Dukungan Teknisi via InfraManager (${req.user?.username || 'Staff'})` })
     })
     const json = await response.json()
-    res.json(json)
+    res.status(response.status).json(json)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -118,7 +118,7 @@ router.get('/tickets', async (req, res) => {
       headers: { Authorization: `Bearer ${token}` }
     })
     const json = await response.json()
-    res.json(json)
+    res.status(response.status).json(json)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -139,7 +139,7 @@ router.patch('/tickets/:id', async (req, res) => {
       body: JSON.stringify(req.body)
     })
     const json = await response.json()
-    res.json(json)
+    res.status(response.status).json(json)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -155,7 +155,7 @@ router.get('/staff', async (req, res) => {
       headers: { Authorization: `Bearer ${token}` }
     })
     const json = await response.json()
-    res.json(json)
+    res.status(response.status).json(json)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
