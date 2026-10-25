@@ -21,6 +21,7 @@ const PAGE_TITLES = {
   '/ftth':       'FTTH Network Map',
   '/alerts':     'Alerts',
   '/settings':   'Settings',
+  '/helpdesk':   'Helpdesk & Bantuan Layar',
 }
 
 function useClock() {

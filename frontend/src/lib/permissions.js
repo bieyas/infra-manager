@@ -23,6 +23,8 @@ export const ROUTE_PERMISSION_MAP = {
   '/odc':         'odc',
   '/odp':         'odp',
   '/customers':   'customers',
+  '/helpdesk':    'helpdesk',
+  '/helpdesk':    'helpdesk',
   '/settings':    'settings',
   '/users':       'user_mgmt',
 }

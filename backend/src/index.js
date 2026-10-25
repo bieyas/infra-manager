@@ -23,6 +23,7 @@ import qrRouter        from './routes/qr.js'
 import customerRouter   from './routes/customers.js'
 import dashboardRouter  from './routes/dashboard.js'
 import settingsRouter   from './routes/settings.js'
+import helpdeskRouter   from './routes/helpdesk.js'
 import { startTrafficCollector } from './lib/trafficCollector.js'
 import { initializeRemoteNatProxy } from './lib/remoteProxyNatV2.js'
 
@@ -77,6 +78,7 @@ app.use('/api/qr',            qrRouter)      // public — no auth, QR scan redi
 app.use('/api/customers',     customerRouter)
 app.use('/api/dashboard',     dashboardRouter)
 app.use('/api/settings',      settingsRouter)
+app.use('/api/helpdesk',      helpdeskRouter)
 
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', ts: new Date() }))

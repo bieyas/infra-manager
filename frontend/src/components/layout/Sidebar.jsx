@@ -20,6 +20,7 @@ import {
   Map,
   Users,
   UserRound,
+  Laptop,
 } from 'lucide-react'
 import Tooltip from '../ui/Tooltip'
 import { useAlerts } from '../../context/AlertsContext'

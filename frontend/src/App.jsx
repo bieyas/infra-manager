@@ -35,6 +35,7 @@ const OdcFormPage = lazy(() => import('./features/distribution/OdcFormPage'))
 const OdpFormPage = lazy(() => import('./features/distribution/OdpFormPage'))
 const QrScanPage      = lazy(() => import('./pages/QrScanPage'))
 const CustomerPage    = lazy(() => import('./features/customers/CustomerPage'))
+const HelpdeskPage    = lazy(() => import('./features/helpdesk/HelpdeskPage'))
 const CustomerForm    = lazy(() => import('./features/customers/CustomerForm'))
 
 export default function App() {
@@ -72,6 +73,7 @@ export default function App() {
               <Route path="/users"           element={<Users />} />
               <Route path="/users/:id"        element={<UserDetail />} />
               <Route path="/customers"        element={<CustomerPage />} />
+              <Route path="/helpdesk"         element={<HelpdeskPage />} />
               <Route path="/customers/new"    element={<CustomerForm />} />
               <Route path="/customers/:id/edit" element={<CustomerForm />} />
               <Route path="*"           element={<NotFound />} />
