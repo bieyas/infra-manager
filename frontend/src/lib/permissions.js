@@ -24,7 +24,6 @@ export const ROUTE_PERMISSION_MAP = {
   '/odp':         'odp',
   '/customers':   'customers',
   '/helpdesk':    'helpdesk',
-  '/helpdesk':    'helpdesk',
   '/settings':    'settings',
   '/users':       'user_mgmt',
 }
@@ -32,6 +31,8 @@ export const ROUTE_PERMISSION_MAP = {
 // Sidebar nav items also need permission keys
 export const NAV_PERMISSION_MAP = {
   '/':            'dashboard',
+  '/helpdesk':    'helpdesk',
+  '/customers':   'customers',
   '/devices':     'devices',
   '/interfaces':  'interfaces',
   '/topology':    'topology',

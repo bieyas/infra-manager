@@ -20,7 +20,7 @@ import {
   Map,
   Users,
   UserRound,
-  Laptop,
+  Headphones,
 } from 'lucide-react'
 import Tooltip from '../ui/Tooltip'
 import { useAlerts } from '../../context/AlertsContext'
@@ -28,8 +28,9 @@ import { useAuth } from '../../context/AuthContext'
 import { hasFeatureAccess, NAV_PERMISSION_MAP } from '../../lib/permissions'
 
 const NAV_TOP = [
-  { label: 'Dashboard',    to: '/',           icon: LayoutDashboard },
-  { label: 'Pelanggan',    to: '/customers',  icon: UserRound },
+  { label: 'Dashboard',        to: '/',           icon: LayoutDashboard },
+  { label: 'Helpdesk & Tiket', to: '/helpdesk',   icon: Headphones },
+  { label: 'Pelanggan',        to: '/customers',  icon: UserRound },
   { label: 'Devices',      to: '/devices',    icon: Server },
   { label: 'Interfaces',   to: '/interfaces', icon: Layers },
   { label: 'Topology',     to: '/topology',   icon: Network },
