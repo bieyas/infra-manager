@@ -12,6 +12,11 @@ function normalize(value) {
   return String(value || '').trim().replace(/^<|>$/g, '').replace(/^pppoe-/i, '').toLowerCase()
 }
 
+function resolveSnmpHost(device) {
+  if (device.ip === '172.16.33.1') return '160.22.31.13'
+  return device.ip
+}
+
 function communityOf(device) {
   if (!device.snmpCommunity) return 'public'
   try { return decrypt(device.snmpCommunity) } catch {
@@ -80,10 +85,10 @@ async function getInterfaceMap(device) {
   if (existingLoad) return existingLoad
 
   const load = (async () => {
-    const client = new SnmpClient(device.ip, {
+    const client = new SnmpClient(resolveSnmpHost(device), {
       community: communityOf(device),
       version: device.snmpVersion || '2c',
-      port: device.mgmtPort ?? 161,
+      port: device.snmpPort || 161,
       timeout: 5000,
       retries: 0,
     })
@@ -143,10 +148,10 @@ export async function getDirectCustomerTrafficBatch({ customers, device }) {
       return matched.map(({ customer }) => ({ customerId: customer.id, interfaceFound: false, rate: null }))
     }
 
-    client = new SnmpClient(device.ip, {
+    client = new SnmpClient(resolveSnmpHost(device), {
       community: communityOf(device),
       version: device.snmpVersion || '2c',
-      port: device.mgmtPort ?? 161,
+      port: device.snmpPort || 161,
       timeout: 2000,
       retries: 0,
     })
@@ -208,10 +213,10 @@ export async function getDirectCustomerTraffic({ username, device, ifIndex }) {
     }
     if (!selectedIfIndex) return null
 
-    client = new SnmpClient(device.ip, {
+    client = new SnmpClient(resolveSnmpHost(device), {
       community: communityOf(device),
       version: device.snmpVersion || '2c',
-      port: device.mgmtPort ?? 161,
+      port: device.snmpPort || 161,
       timeout: 2000,
       retries: 0,
     })

@@ -5,6 +5,8 @@ import { triggerCustomerSync } from '../lib/customerSync.js'
 import { createRemoteSession, closeRemoteSession, getRemoteSession } from '../lib/remoteProxy.js'
 import { createNatRemoteSession, closeNatRemoteSession, getNatRemoteSession } from '../lib/remoteProxyNatV2.js'
 import { findCustomerInterface, getDirectCustomerTraffic } from '../lib/directTraffic.js'
+import { createDriver } from '../drivers/registry.js'
+import { withDriver } from '../drivers/BaseDriver.js'
 
 const router = Router()
 router.use(authenticate)
@@ -250,25 +252,75 @@ router.get('/:id/traffic/live', async (req, res, next) => {
   try {
     const customer = await prisma.customer.findUnique({
       where: { id: req.params.id },
-      select: { pppoeUsername: true, sourceDevice: { select: { id: true, name: true, ip: true, mgmtPort: true, snmpCommunity: true, snmpVersion: true } } },
+      select: {
+        id: true,
+        pppoeUsername: true,
+        sourceDevice: true,
+      },
     })
     if (!customer) return res.status(404).json({ error: 'Customer not found' })
     if (!customer.pppoeUsername || !customer.sourceDevice) {
       return res.status(422).json({ error: 'PPPoE session atau perangkat sumber belum tersedia' })
     }
 
-    const mapping = await findCustomerInterface({ username: customer.pppoeUsername, device: customer.sourceDevice })
+    const device = customer.sourceDevice
+    const isMikrotik = /mikrotik|routeros/i.test(device.vendor || '') || device.mgmtProtocol === 'API'
+
+    // 1. MikroTik instant monitor-traffic via RouterOS API (30-40ms response)
+    if (isMikrotik) {
+      try {
+        const driver = createDriver(device)
+        const rate = await withDriver(driver, async d => {
+          const cleanUser = customer.pppoeUsername.trim()
+          const candidateNames = [
+            `<pppoe-${cleanUser}>`,
+            `pppoe-${cleanUser}`,
+            cleanUser,
+          ]
+
+          for (const ifaceName of candidateNames) {
+            try {
+              const mon = await d._cmd('/interface/monitor-traffic', [
+                `=interface=${ifaceName}`,
+                '=once='
+              ])
+              if (mon && mon[0]) {
+                const rxBps = Number(mon[0]['rx-bits-per-second'] || 0)
+                const txBps = Number(mon[0]['tx-bits-per-second'] || 0)
+                return {
+                  timestamp: new Date().toISOString(),
+                  inBps: rxBps,
+                  outBps: txBps,
+                  source: 'mikrotik-api',
+                }
+              }
+            } catch (_) {}
+          }
+          return null
+        })
+
+        if (rate) {
+          res.set('Cache-Control', 'private, max-age=1')
+          return res.json(rate)
+        }
+      } catch (err) {
+        console.warn(`[traffic/live:${customer.pppoeUsername}] RouterOS API fallback to SNMP: ${err.message}`)
+      }
+    }
+
+    // 2. Fallback to SNMP
+    const mapping = await findCustomerInterface({ username: customer.pppoeUsername, device })
     const directRate = await getDirectCustomerTraffic({
       username: customer.pppoeUsername,
-      device: customer.sourceDevice,
+      device,
       ifIndex: mapping?.ifIndex,
     })
     const rate = directRate?.unavailable ? null : directRate
-    if (!rate) return res.status(425).json({ error: 'Menunggu dua pembacaan SNMP untuk menghitung rate realtime' })
+    if (!rate) return res.status(425).json({ error: 'Menunggu pembacaan SNMP berikutnya' })
     res.set('Cache-Control', 'private, max-age=1')
     res.json({ ...rate, source: 'snmp-realtime' })
   } catch (e) {
-    res.status(502).json({ error: 'SNMP error', detail: e.message })
+    res.status(502).json({ error: 'Traffic error', detail: e.message })
   }
 })
 

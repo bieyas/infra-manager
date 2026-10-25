@@ -106,11 +106,17 @@ export default function CustomerDetail({ customerId, onClose }) {
     api.get(`/customers/${customerId}/traffic/series?range=${trafficRange}`)
       .then(result => {
         if (cancelled) return
-        setTrafficSeries((result.samples || []).map(sample => ({
+        const mapped = (result.samples || []).map(sample => ({
           time: new Date(sample.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
           in: Number(sample.inBps || 0) / 1_000_000,
           out: Number(sample.outBps || 0) / 1_000_000,
-        })))
+        }))
+        if (mapped.length === 1) {
+          const prevTime = new Date(new Date(result.samples[0].timestamp).getTime() - 5 * 60 * 1000)
+            .toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+          mapped.unshift({ time: prevTime, in: mapped[0].in, out: mapped[0].out })
+        }
+        setTrafficSeries(mapped)
       })
       .catch(e => {
         if (!cancelled) setTrafficError(e.message || 'Grafik trafik tidak tersedia')
@@ -238,11 +244,36 @@ export default function CustomerDetail({ customerId, onClose }) {
           {c && (
             <>
               <Section title="Trafik PPPoE" icon={Activity}>
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <span className="text-[10px] text-muted font-mono truncate">pppoe-{c.pppoeUsername}</span>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted font-mono truncate">pppoe-{c.pppoeUsername}</span>
+                    {trafficMode === 'live' && livePoint && (
+                      <div className="flex items-center gap-1.5 text-[10px]">
+                        <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono font-medium">
+                          ⬆ {livePoint.in.toFixed(2)} Mbps
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono font-medium">
+                          ⬇ {livePoint.out.toFixed(2)} Mbps
+                        </span>
+                      </div>
+                    )}
+                    {trafficMode === 'history' && trafficSeries.length > 0 && (
+                      <div className="flex items-center gap-1.5 text-[10px]">
+                        <span className="px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono">
+                          ⬆ {trafficSeries[trafficSeries.length - 1].in.toFixed(2)} Mbps
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 font-mono">
+                          ⬇ {trafficSeries[trafficSeries.length - 1].out.toFixed(2)} Mbps
+                        </span>
+                      </div>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <button type="button" onClick={() => setTrafficMode('history')} className={`text-[10px] px-2 py-1 rounded border ${trafficMode === 'history' ? 'bg-[var(--accent-glow)] border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--border)] text-muted'}`}>Histori</button>
-                    <button type="button" onClick={() => setTrafficMode('live')} className={`text-[10px] px-2 py-1 rounded border ${trafficMode === 'live' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' : 'border-[var(--border)] text-muted'}`}>Live</button>
+                    <button type="button" onClick={() => setTrafficMode('live')} className={`text-[10px] px-2 py-1 rounded border ${trafficMode === 'live' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 flex items-center gap-1' : 'border-[var(--border)] text-muted'}`}>
+                      {trafficMode === 'live' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+                      Live
+                    </button>
                     {trafficMode === 'live' && <select value={liveInterval} onChange={event => setLiveInterval(Number(event.target.value))} className="text-[10px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1.5 py-1 text-primary" aria-label="Interval polling trafik live">
                       <option value={1}>1s</option>
                       <option value={2}>2s</option>
