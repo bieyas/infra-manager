@@ -82,8 +82,8 @@ const EMPTY_FORM = {
   ponCapacity:   '',
 }
 
-const TABS_BASE    = ['Basic', 'Management', 'Uplink']
-const TABS_OLT     = ['Basic', 'Management', 'OLT Config', 'Uplink']
+const TABS_BASE    = ['Basic', 'Management', 'SNMP', 'Uplink']
+const TABS_OLT     = ['Basic', 'Management', 'SNMP', 'OLT Config', 'Uplink']
 
 // ── Validation ───────────────────────────────────────────────────────────────
 const IP_RE = /^(\d{1,3}\.){3}\d{1,3}$/
@@ -98,8 +98,10 @@ function validate(form) {
     e.ponCount = 'Harus berupa angka'
   if (form.type === 'OLT' && form.ponCapacity !== '' && isNaN(Number(form.ponCapacity)))
     e.ponCapacity = 'Harus berupa angka'
-  if (form.mgmtPort !== '' && isNaN(Number(form.mgmtPort)))
-    e.mgmtPort = 'Harus berupa angka'
+  if (form.mgmtPort !== '' && (
+    !/^\d+$/.test(form.mgmtPort) || Number(form.mgmtPort) < 1 || Number(form.mgmtPort) > 65535
+  ))
+    e.mgmtPort = 'Port harus berupa angka 1–65535'
   if (form.lat !== '' && !LAT_RE.test(String(form.lat).trim()))
     e.lat = 'Latitude tidak valid (-90 s/d 90)'
   if (form.lng !== '' && !LNG_RE.test(String(form.lng).trim()))
@@ -404,7 +406,6 @@ export default function DeviceForm({ device, onSave, onClose, loading: savingPro
     }
   }
 
-  const isSNMP     = form.mgmtProtocol === 'SNMP'
   const needsLogin = ['SSH', 'TELNET', 'API', 'WEB'].includes(form.mgmtProtocol)
 
   return (
@@ -545,7 +546,9 @@ export default function DeviceForm({ device, onSave, onClose, loading: savingPro
                   <FieldWrap
                     label="Port"
                     error={errors.mgmtPort}
-                    hint={portEdited ? 'Port diset manual' : 'Mengikuti protokol'}
+                    hint={portEdited
+                      ? 'Port manual; untuk NAT isi port eksternal yang di-forward ke perangkat'
+                      : 'Mengikuti protokol; untuk NAT sesuaikan dengan port eksternal MikroTik'}
                   >
                     <div className="relative">
                       <TextInput
@@ -602,39 +605,40 @@ export default function DeviceForm({ device, onSave, onClose, loading: savingPro
                   </>
                 )}
 
-                {/* SNMP fields */}
-                {isSNMP && (
-                  <>
-                    <div className="pt-1 border-t border-[var(--border)]">
-                      <p className="text-[10px] font-semibold text-muted uppercase tracking-wider mb-3">Konfigurasi SNMP</p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <FieldWrap label="SNMP Version">
-                        <SelectInput
-                          value={form.snmpVersion}
-                          onChange={e => set('snmpVersion', e.target.value)}
-                          options={SNMP_VERSIONS.map(v => ({ value: v, label: v.toUpperCase() }))}
-                        />
-                      </FieldWrap>
-                      <FieldWrap
-                        label="Community String"
-                        hint={isEdit && device?.hasSnmpCommunity ? 'Kosongkan jika tidak ingin mengubah' : undefined}
-                      >
-                        <PasswordInput
-                          value={form.snmpCommunity}
-                          onChange={e => set('snmpCommunity', e.target.value)}
-                          placeholder={isEdit && device?.hasSnmpCommunity ? '••••••••' : 'public'}
-                        />
-                      </FieldWrap>
-                    </div>
-                  </>
-                )}
-
                 {!form.mgmtProtocol && (
                   <p className="py-6 text-center text-muted text-xs">
                     Pilih protokol untuk menampilkan opsi kredensial.
                   </p>
                 )}
+              </>
+            )}
+
+            {/* ════ SNMP TAB ════ */}
+            {tab === 'SNMP' && (
+              <>
+                <div className="p-3 rounded-lg bg-[var(--accent-glow)] border border-[var(--accent)]/20 text-xs text-secondary">
+                  Kredensial SNMP disimpan terpisah dari protokol management. Anda dapat tetap memakai
+                  <strong> API (RouterOS)</strong> sebagai protokol utama dan menggunakan SNMP untuk trafik realtime.
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <FieldWrap label="SNMP Version">
+                    <SelectInput
+                      value={form.snmpVersion}
+                      onChange={e => set('snmpVersion', e.target.value)}
+                      options={SNMP_VERSIONS.map(v => ({ value: v, label: v.toUpperCase() }))}
+                    />
+                  </FieldWrap>
+                  <FieldWrap
+                    label="Community String"
+                    hint={isEdit && device?.hasSnmpCommunity ? 'Kosongkan jika tidak ingin mengubah' : 'Read-only community dari MikroTik'}
+                  >
+                    <PasswordInput
+                      value={form.snmpCommunity}
+                      onChange={e => set('snmpCommunity', e.target.value)}
+                      placeholder={isEdit && device?.hasSnmpCommunity ? '••••••••' : 'public'}
+                    />
+                  </FieldWrap>
+                </div>
               </>
             )}
 

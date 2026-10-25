@@ -22,6 +22,9 @@ import toolsRouter     from './routes/tools.js'
 import qrRouter        from './routes/qr.js'
 import customerRouter   from './routes/customers.js'
 import dashboardRouter  from './routes/dashboard.js'
+import settingsRouter   from './routes/settings.js'
+import { startTrafficCollector } from './lib/trafficCollector.js'
+import { initializeRemoteNatProxy } from './lib/remoteProxyNatV2.js'
 
 // BigInt → number untuk JSON serialization (field inBps/outBps dari Prisma)
 BigInt.prototype.toJSON = function () { return Number(this) }
@@ -35,8 +38,7 @@ const ALLOWED_ORIGINS = [
   'http://localhost:6001',
   'http://127.0.0.1:6001',
   'http://10.17.33.9:6001',
-  'https://infra.fastkho.online',
-  'http://bondongoyot.ddns.net:6001',
+  'https://app.fastkho.online',
 ].filter(Boolean)
 
 app.use(helmet())
@@ -74,6 +76,7 @@ app.use('/api/tools',         toolsRouter)
 app.use('/api/qr',            qrRouter)      // public — no auth, QR scan redirect
 app.use('/api/customers',     customerRouter)
 app.use('/api/dashboard',     dashboardRouter)
+app.use('/api/settings',      settingsRouter)
 
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', ts: new Date() }))
@@ -88,4 +91,8 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ error: err.message || 'Internal server error' })
 })
 
+await initializeRemoteNatProxy().catch(error => {
+  console.warn(`Remote ONU NAT startup cleanup skipped: ${error.message}`)
+})
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API listening on http://0.0.0.0:${PORT}`))
+startTrafficCollector()

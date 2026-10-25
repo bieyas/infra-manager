@@ -3,6 +3,8 @@ import prisma from '../lib/prisma.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
 import { triggerCustomerSync } from '../lib/customerSync.js'
 import { createRemoteSession, closeRemoteSession, getRemoteSession } from '../lib/remoteProxy.js'
+import { createNatRemoteSession, closeNatRemoteSession, getNatRemoteSession } from '../lib/remoteProxyNatV2.js'
+import { findCustomerInterface, getDirectCustomerTraffic } from '../lib/directTraffic.js'
 
 const router = Router()
 router.use(authenticate)
@@ -78,7 +80,9 @@ async function releaseSplitterPort(splitterPortId, customerId, tx = prisma) {
 
 router.get('/', async (req, res, next) => {
   try {
-    await triggerCustomerSync()
+    void triggerCustomerSync().catch(error => {
+      console.error(`[customer-sync] ${error.message}`)
+    })
     const { q, status, connectionStatus, odpId, odcId, page = '1', limit = '50' } = req.query
     const take = Math.min(parseInt(limit) || 50, 200)
     const skip = (Math.max(parseInt(page) || 1, 1) - 1) * take
@@ -120,7 +124,9 @@ router.get('/', async (req, res, next) => {
 
 router.get('/stats', async (req, res, next) => {
   try {
-    await triggerCustomerSync()
+    void triggerCustomerSync().catch(error => {
+      console.error(`[customer-sync] ${error.message}`)
+    })
     const groups = await prisma.customer.groupBy({
       by: ['serviceStatus'],
       _count: { _all: true },
@@ -181,6 +187,7 @@ router.get('/:id', async (req, res, next) => {
             },
           },
         },
+        sourceDevice: { select: { id: true, name: true, ip: true, mgmtPort: true, snmpCommunity: true, snmpVersion: true } },
       },
     })
     if (!customer) return res.status(404).json({ error: 'Customer not found' })
@@ -188,28 +195,178 @@ router.get('/:id', async (req, res, next) => {
   } catch (e) { next(e) }
 })
 
-// ── Temporary remote ONU access ──────────────────────────────────────────────
+// ── GET /api/customers/:id/traffic ───────────────────────────────────────────
 
-router.post('/:id/remote-session', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+router.get('/:id/traffic', async (req, res, next) => {
   try {
     const customer = await prisma.customer.findUnique({
       where: { id: req.params.id },
-      select: { ipAddress: true },
+      select: {
+        id: true,
+        pppoeUsername: true,
+        sourceDevice: { select: { id: true, name: true, ip: true, mgmtPort: true, snmpCommunity: true, snmpVersion: true } },
+      },
+    })
+    if (!customer) return res.status(404).json({ error: 'Customer not found' })
+    if (!customer.pppoeUsername || !customer.sourceDevice) {
+      return res.json({ configured: false, reason: 'PPPoE session atau perangkat sumber belum tersedia' })
+    }
+
+    const port = await findCustomerInterface({ username: customer.pppoeUsername, device: customer.sourceDevice })
+    res.json({
+      configured: Boolean(port),
+      username: customer.pppoeUsername,
+      device: { id: customer.sourceDevice.id, hostname: customer.sourceDevice.name },
+      port: port ? {
+        id: port.ifIndex,
+        name: port.name,
+        description: port.description,
+        alias: port.alias,
+        status: port.operStatus,
+      } : null,
+    })
+  } catch (e) {
+    res.status(502).json({ error: 'SNMP error', detail: e.message })
+  }
+})
+
+// ── GET /api/customers/:id/traffic/series ────────────────────────────────────
+
+router.get('/:id/traffic/series', async (req, res, next) => {
+  try {
+    const rangeHours = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[req.query.range] || 24
+    const samples = await prisma.customerTrafficSample.findMany({
+      where: { customerId: req.params.id, sampledAt: { gte: new Date(Date.now() - rangeHours * 60 * 60 * 1000) } },
+      orderBy: { sampledAt: 'asc' },
+      select: { sampledAt: true, inBps: true, outBps: true },
+    })
+    res.json({ intervalSeconds: 300, samples: samples.map(sample => ({ timestamp: sample.sampledAt, inBps: sample.inBps, outBps: sample.outBps })) })
+  } catch (e) { next(e) }
+})
+
+// ── GET /api/customers/:id/traffic/live ──────────────────────────────────────
+
+router.get('/:id/traffic/live', async (req, res, next) => {
+  try {
+    const customer = await prisma.customer.findUnique({
+      where: { id: req.params.id },
+      select: { pppoeUsername: true, sourceDevice: { select: { id: true, name: true, ip: true, mgmtPort: true, snmpCommunity: true, snmpVersion: true } } },
+    })
+    if (!customer) return res.status(404).json({ error: 'Customer not found' })
+    if (!customer.pppoeUsername || !customer.sourceDevice) {
+      return res.status(422).json({ error: 'PPPoE session atau perangkat sumber belum tersedia' })
+    }
+
+    const mapping = await findCustomerInterface({ username: customer.pppoeUsername, device: customer.sourceDevice })
+    const directRate = await getDirectCustomerTraffic({
+      username: customer.pppoeUsername,
+      device: customer.sourceDevice,
+      ifIndex: mapping?.ifIndex,
+    })
+    const rate = directRate?.unavailable ? null : directRate
+    if (!rate) return res.status(425).json({ error: 'Menunggu dua pembacaan SNMP untuk menghitung rate realtime' })
+    res.set('Cache-Control', 'private, max-age=1')
+    res.json({ ...rate, source: 'snmp-realtime' })
+  } catch (e) {
+    res.status(502).json({ error: 'SNMP error', detail: e.message })
+  }
+})
+
+// ── GET /api/customers/:id/traffic/graph ─────────────────────────────────────
+
+router.get('/:id/traffic/graph', async (req, res, next) => {
+  try {
+    const customer = await prisma.customer.findUnique({
+      where: { id: req.params.id },
+      select: { pppoeUsername: true, sourceDevice: { select: { name: true, ip: true } } },
+    })
+    if (!customer) return res.status(404).json({ error: 'Customer not found' })
+    if (!customer.pppoeUsername || !customer.sourceDevice) {
+      return res.status(422).json({ error: 'PPPoE session atau perangkat sumber belum tersedia' })
+    }
+
+    const rangeHours = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 }[req.query.range] || 24
+    const samples = await prisma.customerTrafficSample.findMany({
+      where: { customerId: req.params.id, sampledAt: { gte: new Date(Date.now() - rangeHours * 60 * 60 * 1000) } },
+      orderBy: { sampledAt: 'asc' },
+      select: { sampledAt: true, inBps: true, outBps: true },
+    })
+    res.set('Cache-Control', 'private, max-age=60')
+    res.json({ intervalSeconds: 300, samples: samples.map(sample => ({ timestamp: sample.sampledAt, inBps: sample.inBps, outBps: sample.outBps })) })
+  } catch (e) {
+    res.status(502).json({ error: 'Traffic error', detail: e.message })
+  }
+})
+
+// ── Temporary remote ONU access ──────────────────────────────────────────────
+
+router.post('/:id/remote-session', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  let usingNatV2 = false
+  try {
+    const customer = await prisma.customer.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true,
+        ipAddress: true,
+        onuSn: true,
+        onuIndex: true,
+        odp: { select: { olt: { select: { vendor: true, model: true } } } },
+      },
     })
     if (!customer) return res.status(404).json({ error: 'Customer not found' })
     if (!customer.ipAddress) return res.status(422).json({ error: 'IP ONU belum tersedia' })
 
-    const targetPort = Number(process.env.REMOTE_PROXY_TARGET_PORT || 80)
     const publicUrl = process.env.REMOTE_PROXY_PUBLIC_URL || `${req.protocol}://${req.hostname}`
+    const targetPort = Number(process.env.REMOTE_PROXY_TARGET_PORT || 80)
+    const proxySettings = await prisma.remoteOnuSetting.findUnique({ where: { id: 'remote-onu' } })
+    if (proxySettings?.version === 'v2') {
+      usingNatV2 = true
+      const session = await createNatRemoteSession({
+        targetHost: customer.ipAddress,
+        targetPort,
+        ownerId: req.user.id,
+        customerId: req.params.id,
+        publicUrl,
+        sourceCidr: proxySettings.natSourceCidr,
+        ingressInterface: proxySettings.natIngressInterface,
+      })
+      if (process.env.REMOTE_PROXY_DIAGNOSTICS !== 'false') {
+        const userAgent = String(req.headers['user-agent'] || '')
+        console.info('[remote-diag]', JSON.stringify({
+          event: 'session-created',
+          session: session.id.slice(0, 8),
+          version: 'v2',
+          platform: /android|iphone|ipad|ipod|mobile/i.test(userAgent) ? 'mobile' : /windows|macintosh|linux|x11/i.test(userAgent) ? 'desktop' : 'unknown',
+          userAgent: userAgent.slice(0, 240),
+          onuIp: customer.ipAddress,
+          onuModel: 'unknown (not stored)',
+          onuSerialSuffix: customer.onuSn ? customer.onuSn.slice(-4) : null,
+          onuIndex: customer.onuIndex,
+          oltVendor: customer.odp?.olt?.vendor || null,
+          oltModel: customer.odp?.olt?.model || null,
+        }))
+      }
+      return res.status(201).json(session)
+    }
+
     const session = await createRemoteSession({
       targetHost: customer.ipAddress,
       targetPort,
       ownerId: req.user.id,
       customerId: req.params.id,
       publicUrl,
+      onuSerial: customer.onuSn,
+      onuIndex: customer.onuIndex,
+      oltVendor: customer.odp?.olt?.vendor,
+      oltModel: customer.odp?.olt?.model,
+      clientUserAgent: req.headers['user-agent'],
     })
     res.status(201).json(session)
   } catch (e) {
+    if (usingNatV2) {
+      const validationError = /^(IP ONU|NAT v2 hanya mendukung|Port ONU|Interface ingress|Allowlist|Port NAT|REMOTE_PROXY_PUBLIC_URL)/i.test(e.message)
+      return res.status(validationError ? 422 : 503).json({ error: e.message })
+    }
     if (/IP ONU|Port ONU|port range|Jumlah sesi|Gagal membuka|PUBLIC_URL/.test(e.message)) {
       return res.status(422).json({ error: e.message })
     }
@@ -218,14 +375,20 @@ router.post('/:id/remote-session', requireRole('ADMIN', 'TECHNICIAN'), async (re
 })
 
 router.get('/:id/remote-session/:sessionId', requireRole('ADMIN', 'TECHNICIAN'), async (req, res) => {
-  const session = getRemoteSession(req.params.sessionId, req.user.id, req.params.id)
+  const session = getNatRemoteSession(req.params.sessionId, req.user.id, req.params.id)
+    || getRemoteSession(req.params.sessionId, req.user.id, req.params.id)
   if (!session) return res.status(404).json({ error: 'Remote session expired or not found' })
   res.json(session)
 })
 
-router.delete('/:id/remote-session/:sessionId', requireRole('ADMIN', 'TECHNICIAN'), async (req, res) => {
-  closeRemoteSession(req.params.sessionId, req.user.id, req.params.id)
-  res.status(204).end()
+router.delete('/:id/remote-session/:sessionId', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  try {
+    const closedNat = await closeNatRemoteSession(req.params.sessionId, req.user.id, req.params.id)
+    if (!closedNat) closeRemoteSession(req.params.sessionId, req.user.id, req.params.id)
+    res.status(204).end()
+  } catch (error) {
+    next(error)
+  }
 })
 
 // ── POST /api/customers ───────────────────────────────────────────────────────

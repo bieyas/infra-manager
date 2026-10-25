@@ -304,8 +304,15 @@ const STATIC_TABS_OLT    = ['Overview', 'ONU List', 'Power', 'Alerts']
 
 // Dynamic tabs added based on driver capabilities
 function buildTabs(caps, isOlt = false) {
-  const base = isOlt ? STATIC_TABS_OLT : STATIC_TABS
+  let base = isOlt ? STATIC_TABS_OLT : STATIC_TABS
   if (!caps) return base
+  if (isOlt) {
+    base = base.filter(tab => {
+      if (tab === 'ONU List') return caps.onuList !== false && caps.ontList !== false
+      if (tab === 'Power') return caps.ponPower !== false
+      return true
+    })
+  }
   const extra = []
   if (!isOlt && (caps.resource || caps.interfaces)) extra.push('Live')
   if (!isOlt && caps.ipAddresses)                   extra.push('IP Addr')
@@ -418,7 +425,9 @@ export default function DeviceDetailPage() {
   // OLT: PON ports from snapshot
   const ponPorts   = isOlt && Array.isArray(snapshot?.ponPorts) ? snapshot.ponPorts : null
   const onuOnline  = snapshot?.globalOnline ?? (ponPorts ? ponPorts.reduce((s, p) => s + p.onlineOnu, 0) : null)
-  const onuTotal   = snapshot?.globalTotal  ?? (ponPorts ? ponPorts.reduce((s, p) => s + p.totalOnu,  0) : (d.ponCount ?? null))
+  const onuTotal   = snapshot?.globalTotal  ?? (ponPorts
+    ? ponPorts.reduce((s, p) => s + p.totalOnu, 0)
+    : (capabilities?.ponPorts ? d.ponCount ?? null : null))
 
   // Interfaces: live from snapshot preferred, fallback to DB (non-OLT)
   const snapIfaces = !isOlt && Array.isArray(snapshot?.interfaces) ? snapshot.interfaces : null
@@ -711,6 +720,30 @@ export default function DeviceDetailPage() {
                 </div>
               </div>
 
+              {isOlt && Object.keys(snapStat.memoryStats ?? {}).length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <span className="text-xs font-semibold text-primary">Statistik objek CLI</span>
+                    <Badge variant="neutral" className="ml-auto">bukan persentase RAM</Badge>
+                  </CardHeader>
+                  <CardBody>
+                    <details>
+                      <summary className="cursor-pointer text-[10px] text-muted hover:text-primary">
+                        Tampilkan {Object.keys(snapStat.memoryStats).length} penghitung internal
+                      </summary>
+                      <div className="mt-2 max-h-48 overflow-auto grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {Object.entries(snapStat.memoryStats).map(([label, value]) => (
+                          <div key={label} className="rounded-lg bg-[var(--surface-2)] px-2.5 py-1.5">
+                            <p className="text-[9px] text-muted uppercase tracking-wide mb-0.5">{label}</p>
+                            <p className="text-[11px] font-mono font-medium text-primary">{value}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  </CardBody>
+                </Card>
+              )}
+
               {/* PON port bars for OLT */}
               {isOlt && (
                 <Card>
@@ -719,10 +752,12 @@ export default function DeviceDetailPage() {
                       PON Ports
                       {snapLoading && !ponPorts && <Loader2 size={10} className="animate-spin text-muted" />}
                       {ponPorts && <Badge variant="neutral" className="ml-1">live</Badge>}
-                      <button onClick={() => setTab('Power')}
-                        className="ml-auto flex items-center gap-1 text-[10px] text-muted hover:text-[var(--accent)] transition-colors">
-                        <Zap size={10} /> Power
-                      </button>
+                      {TABS.includes('Power') && (
+                        <button onClick={() => setTab('Power')}
+                          className="ml-auto flex items-center gap-1 text-[10px] text-muted hover:text-[var(--accent)] transition-colors">
+                          <Zap size={10} /> Power
+                        </button>
+                      )}
                       <button onClick={fetchSnapshot} disabled={snapLoading}
                         className="text-muted hover:text-primary transition-colors disabled:opacity-40">
                         <RefreshCw size={10} className={snapLoading ? 'animate-spin' : ''} />
@@ -799,6 +834,56 @@ export default function DeviceDetailPage() {
                       </p>
                     )}
                   </CardBody>
+                </Card>
+              )}
+
+              {capabilities?.ethernetInterfaces && (
+                <Card>
+                  <CardHeader>
+                    <span className="text-xs font-semibold text-primary">
+                      Port Gigabit
+                      {snapshot?.ethernetInterfaces && (
+                        <Badge variant="neutral" className="ml-1">live</Badge>
+                      )}
+                    </span>
+                    <button onClick={fetchSnapshot} disabled={snapLoading}
+                      className="ml-auto text-muted hover:text-primary transition-colors disabled:opacity-40">
+                      <RefreshCw size={10} className={snapLoading ? 'animate-spin' : ''} />
+                    </button>
+                  </CardHeader>
+                  {snapshot?.ethernetInterfacesError ? (
+                    <CardBody>
+                      <p className="text-[10px] text-rose-400">{snapshot.ethernetInterfacesError}</p>
+                    </CardBody>
+                  ) : (
+                    <div className="divide-y divide-[var(--border)]/40">
+                      {(snapshot?.ethernetInterfaces ?? []).map(port => (
+                        <div key={port.id} className="px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px]">
+                          <span className={`w-2 h-2 rounded-full ${port.running ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                          <span className="font-mono font-semibold text-primary">{port.name}</span>
+                          <span className={port.running ? 'text-emerald-400' : 'text-muted'}>
+                            {port.running ? 'Up' : 'Down'}
+                          </span>
+                          {port.speedMbps != null && <span className="text-muted">{port.speedMbps} Mbps {port.duplex}</span>}
+                          {port.pvid != null && <span className="text-muted">PVID {port.pvid}</span>}
+                          {port.taggedVlans.length > 0 && (
+                            <span className="text-muted">Tagged: {port.taggedVlans.join(', ')}</span>
+                          )}
+                          <span className="ml-auto text-muted">
+                            ↓ {port.input?.bytesPerSecond?.toLocaleString('id-ID') ?? '—'} B/s
+                            {' · '}↑ {port.output?.bytesPerSecond?.toLocaleString('id-ID') ?? '—'} B/s
+                            {' · '}err {port.inputErrors + port.outputErrors}
+                          </span>
+                        </div>
+                      ))}
+                      {!snapshot?.ethernetInterfaces?.length && !snapLoading && (
+                        <CardBody><p className="text-[10px] text-muted text-center">Data port belum tersedia.</p></CardBody>
+                      )}
+                      {snapLoading && !snapshot?.ethernetInterfaces?.length && (
+                        <CardBody><p className="text-[10px] text-muted text-center">Mengambil data port...</p></CardBody>
+                      )}
+                    </div>
+                  )}
                 </Card>
               )}
 

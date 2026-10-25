@@ -29,6 +29,14 @@ function powerColor(dbm) {
   return 'text-rose-400'
 }
 
+function onuPowerColor(dbm) {
+  if (dbm === null || dbm === undefined) return 'text-muted'
+  if (dbm > -18) return 'text-purple-400'
+  if (dbm < -27) return 'text-rose-400'
+  if (dbm < -25) return 'text-amber-400'
+  return 'text-emerald-400'
+}
+
 function fmtDbm(v) {
   if (v === null || v === undefined) return '—'
   return `${v.toFixed(1)} dBm`
@@ -100,7 +108,7 @@ function OnuDetailDrawer({ deviceId, onuIndex, onClose }) {
                 </div>
                 <div className="rounded bg-[var(--surface)] px-2 py-1.5">
                   <p className="text-[9px] text-muted mb-0.5">ONU Rx ↓ downstream</p>
-                  <p className={`text-sm font-bold font-mono ${powerColor(power.onuRxPower)}`}>
+                  <p className={`text-sm font-bold font-mono ${onuPowerColor(power.onuRxPower)}`}>
                     {fmtDbm(power.onuRxPower)}
                   </p>
                   <p className="text-[9px] text-muted mt-0.5">OLT Tx: {fmtDbm(power.oltTxPower)}</p>
@@ -222,7 +230,7 @@ function OnuRow({ onu, deviceId, expanded, onToggle, fetchDetail }) {
         {/* Col 3 desktop / Col 2 mobile: Rx + Status (merged on mobile) */}
         <div className="text-right">
           {/* Rx power */}
-          <p className={`text-[11px] font-mono font-medium ${power ? powerColor(power.onuRxPower) : 'text-muted'}`}>
+          <p className={`text-[11px] font-mono font-medium ${power ? onuPowerColor(power.onuRxPower) : 'text-muted'}`}>
             {power ? fmtDbm(power.onuRxPower) : detailLoading ? '···' : '—'}
           </p>
           {/* Jarak — desktop only */}

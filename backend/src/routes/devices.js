@@ -28,6 +28,10 @@ function toNodeStatus(s) {
   }
 }
 
+function decryptOrNull(value) {
+  try { return decrypt(value) } catch (_) { return null }
+}
+
 /** Strip encrypted credential fields from outgoing response */
 function sanitize(device) {
   if (!device) return device
@@ -59,6 +63,25 @@ function buildMgmtData(body) {
     d.snmpCommunity = encrypt(body.snmpCommunity)
   return d
 }
+
+async function managementEndpointExists(ip, mgmtPort, excludeId) {
+  return Boolean(await prisma.device.findFirst({
+    where: {
+      ip,
+      mgmtPort: mgmtPort ?? null,
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true },
+  }))
+}
+
+const mgmtPortValidator = () => body('mgmtPort')
+  .optional({ values: 'null' })
+  .custom(value => value === '' || (
+    /^\d+$/.test(String(value)) && Number(value) >= 1 && Number(value) <= 65535
+  ))
+  .withMessage('Management port must be between 1 and 65535')
+  .customSanitizer(value => value === '' || value == null ? null : Number(value))
 
 const DEVICE_INCLUDE = {
   interfaces: true,
@@ -113,13 +136,18 @@ router.get('/:id', async (req, res, next) => {
 router.post('/',
   requireRole('ADMIN', 'TECHNICIAN'),
   body('name').trim().notEmpty(),
-  body('ip').isIP(),
+  body('ip').trim().isIP(),
   body('type').notEmpty(),
+  mgmtPortValidator(),
   async (req, res, next) => {
     const errs = validationResult(req)
     if (!errs.isEmpty()) return res.status(422).json({ errors: errs.array() })
     try {
       const { name, ip, type, vendor, model, location, status, notes, lat, lng } = req.body
+      const mgmtPort = req.body.mgmtPort ?? null
+      if (await managementEndpointExists(ip, mgmtPort)) {
+        return res.status(409).json({ error: `Management endpoint ${ip}:${mgmtPort ?? 'default'} already exists` })
+      }
       const device = await prisma.device.create({
         data: {
           name, ip,
@@ -134,7 +162,7 @@ router.post('/',
       })
       res.status(201).json(sanitize(device))
     } catch (e) {
-      if (e.code === 'P2002') return res.status(409).json({ error: 'IP already exists' })
+      if (e.code === 'P2002') return res.status(409).json({ error: 'Management endpoint already exists' })
       next(e)
     }
   }
@@ -143,10 +171,19 @@ router.post('/',
 // PATCH /api/devices/:id
 router.patch('/:id',
   requireRole('ADMIN', 'TECHNICIAN'),
+  mgmtPortValidator(),
   async (req, res, next) => {
     try {
+      const validation = validationResult(req)
+      if (!validation.isEmpty()) return res.status(422).json({ errors: validation.array() })
       const { name, ip, type, vendor, model, location, status, notes,
               cpuPct, memPct, uptimeSeconds, lat, lng } = req.body
+      const current = await prisma.device.findUnique({
+        where: { id: req.params.id },
+        select: { ip: true, mgmtPort: true },
+      })
+      if (!current) return res.status(404).json({ error: 'Device not found' })
+
       const data = {}
       if (name          !== undefined) data.name          = name
       if (type          !== undefined) data.type          = type.toUpperCase()
@@ -163,12 +200,17 @@ router.patch('/:id',
       if (ip            !== undefined) data.ip            = ip.trim()
       Object.assign(data, buildMgmtData(req.body))
 
+      const endpointIp = ip !== undefined ? ip.trim() : current.ip
+      const endpointPort = req.body.mgmtPort !== undefined ? req.body.mgmtPort : current.mgmtPort
+      if (await managementEndpointExists(endpointIp, endpointPort, req.params.id)) {
+        return res.status(409).json({
+          error: `Management endpoint ${endpointIp}:${endpointPort ?? 'default'} already exists`,
+        })
+      }
+
       // If IP is changing, sync IPAM Host record (best-effort, no hard failure)
       if (ip !== undefined) {
-        const current = await prisma.device.findUnique({
-          where: { id: req.params.id }, select: { ip: true },
-        })
-        if (current && current.ip !== ip.trim()) {
+        if (current.ip !== ip.trim()) {
           await prisma.host.updateMany({
             where: { ip: current.ip },
             data:  { ip: ip.trim() },
@@ -184,7 +226,7 @@ router.patch('/:id',
       res.json(sanitize(device))
     } catch (e) {
       if (e.code === 'P2025') return res.status(404).json({ error: 'Device not found' })
-      if (e.code === 'P2002') return res.status(409).json({ error: 'IP already in use' })
+      if (e.code === 'P2002') return res.status(409).json({ error: 'Management endpoint already in use' })
       next(e)
     }
   }
@@ -208,7 +250,7 @@ router.delete('/:id', requireRole('ADMIN'), async (req, res, next) => {
 router.post('/probe-all', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
   try {
     const devices = await prisma.device.findMany({
-      select: { id: true, ip: true, mgmtPort: true, mgmtProtocol: true },
+      select: { id: true, ip: true, mgmtPort: true, mgmtProtocol: true, snmpCommunity: true, snmpVersion: true },
     })
 
     // Process in batches of 20 to avoid overwhelming the network
@@ -218,7 +260,13 @@ router.post('/probe-all', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, n
       const batch = devices.slice(i, i + BATCH)
       const batchResults = await Promise.all(
         batch.map(async d => {
-          const r   = await probeDevice({ ip: d.ip, mgmtPort: d.mgmtPort, mgmtProtocol: d.mgmtProtocol })
+          const r   = await probeDevice({
+            ip: d.ip,
+            mgmtPort: d.mgmtPort,
+            mgmtProtocol: d.mgmtProtocol,
+            snmpCommunity: d.snmpCommunity ? decryptOrNull(d.snmpCommunity) : undefined,
+            snmpVersion: d.snmpVersion,
+          })
           const now = new Date()
           await prisma.device.update({
             where: { id: d.id },
@@ -249,7 +297,7 @@ router.post('/:id/probe', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, n
   try {
     const device = await prisma.device.findUnique({
       where: { id: req.params.id },
-      select: { id: true, ip: true, mgmtPort: true, mgmtProtocol: true, status: true },
+      select: { id: true, ip: true, mgmtPort: true, mgmtProtocol: true, snmpCommunity: true, snmpVersion: true, status: true },
     })
     if (!device) return res.status(404).json({ error: 'Device not found' })
 
@@ -257,6 +305,8 @@ router.post('/:id/probe', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, n
       ip:           device.ip,
       mgmtPort:     device.mgmtPort,
       mgmtProtocol: device.mgmtProtocol,
+      community:    device.snmpCommunity ? decryptOrNull(device.snmpCommunity) : undefined,
+      snmpVersion:  device.snmpVersion,
     })
 
     const now       = new Date()

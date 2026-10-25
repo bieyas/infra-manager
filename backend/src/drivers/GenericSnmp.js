@@ -35,14 +35,20 @@ export class GenericSnmpDriver extends BaseDriver {
     this._snmp = new SnmpClient(this.device.ip, {
       community: this.community || 'public',
       version:   this.device.snmpVersion || '2c',
+      port:      this.device.mgmtPort ?? 161,
       timeout:   5000,
       retries:   1,
     })
-    // Verify connectivity by fetching sysDescr
-    const descr = await this._snmp.getValue(OID.sysDescr)
-    if (descr === null) throw new Error('SNMP: no response from device')
-    this.connected = true
-    this._sysDescr = descr
+    try {
+      const descr = await this._snmp.getValue(OID.sysDescr)
+      if (descr === null) throw new Error('SNMP: no response from device')
+      this.connected = true
+      this._sysDescr = descr
+    } catch (error) {
+      this._snmp.close()
+      this._snmp = null
+      throw error
+    }
   }
 
   async disconnect() {
@@ -127,8 +133,8 @@ export class GenericSnmpDriver extends BaseDriver {
         speed,
         adminStatus: row['7'] === 1 ? 'up' : 'down',        // 1=up, 2=down
         operStatus:  row['8'] === 1 ? 'up' : 'down',
-        rxBytes:     Number(xrow['6']  ?? 0),                // ifHCInOctets
-        txBytes:     Number(xrow['10'] ?? 0),                // ifHCOutOctets
+        rxBytes:     Number(xrow['6']  ?? row['10'] ?? 0),   // ifHCInOctets / ifInOctets
+        txBytes:     Number(xrow['10'] ?? row['16'] ?? 0),  // ifHCOutOctets / ifOutOctets
       })
     }
 

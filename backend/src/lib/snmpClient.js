@@ -21,10 +21,12 @@ export class SnmpClient {
    */
   constructor(host, opts = {}) {
     this.host = host
-    const ver = (opts.version ?? '2c').toString()
+    const ver = (opts.version ?? '2c').toString().toLowerCase()
+    if (ver === '3' || ver === 'v3') {
+      throw new Error('SNMPv3 credentials are not configured')
+    }
     const snmpVer =
-      ver === '1'  ? snmp.Version1  :
-      ver === '3'  ? snmp.Version3  :
+      (ver === '1' || ver === 'v1') ? snmp.Version1  :
                      snmp.Version2c
 
     this._session = snmp.createSession(host, opts.community || 'public', {
@@ -127,6 +129,9 @@ export class SnmpClient {
 
     switch (varbind.type) {
       case snmp.ObjectType.OctetString:
+        if (Buffer.isBuffer(varbind.value) && varbind.value.length === 6) {
+          return varbind.value
+        }
         return varbind.value.toString()
       case snmp.ObjectType.Integer:
       case snmp.ObjectType.Counter:
@@ -194,6 +199,10 @@ export const OID = {
   ifHCOutOctets: '1.3.6.1.2.1.31.1.1.1.10',
   ifHighSpeed:   '1.3.6.1.2.1.31.1.1.1.15',
   ifAlias:       '1.3.6.1.2.1.31.1.1.1.18',
+
+  // 32-bit interface counters (fallback for devices without ifXTable)
+  ifInOctets:    '1.3.6.1.2.1.2.2.1.10',
+  ifOutOctets:   '1.3.6.1.2.1.2.2.1.16',
 
   // IP Net-to-Media (ARP table)
   ipNetToMedia:  '1.3.6.1.2.1.4.22.1',

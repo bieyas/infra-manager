@@ -1,29 +1,86 @@
 import net from 'node:net'
+import http from 'node:http'
 import crypto from 'node:crypto'
+import { allocateRemotePort, releaseRemotePort } from './remoteProxyPorts.js'
 
 const sessions = new Map()
-const MIN_PORT = Number(process.env.REMOTE_PROXY_MIN_PORT || 40000)
-const MAX_PORT = Number(process.env.REMOTE_PROXY_MAX_PORT || 49999)
+const MIN_PORT = Number(process.env.REMOTE_PROXY_MIN_PORT || 6100)
+const MAX_PORT = Number(process.env.REMOTE_PROXY_MAX_PORT || 6999)
 const TTL_MS = Number(process.env.REMOTE_PROXY_TTL_MS || 15 * 60 * 1000)
 const IDLE_MS = Number(process.env.REMOTE_PROXY_IDLE_MS || 2 * 60 * 1000)
 const MAX_SESSIONS = Number(process.env.REMOTE_PROXY_MAX_SESSIONS || 100)
 const CONNECT_TIMEOUT_MS = Number(process.env.REMOTE_PROXY_CONNECT_TIMEOUT_MS || 5000)
 const BIND_HOST = process.env.REMOTE_PROXY_BIND_HOST || '0.0.0.0'
 const PUBLIC_URL = process.env.REMOTE_PROXY_PUBLIC_URL || ''
+const DIAGNOSTICS_ENABLED = process.env.REMOTE_PROXY_DIAGNOSTICS !== 'false'
 
-function pickPort() {
-  const used = new Set([...sessions.values()].map(session => session.port))
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const port = MIN_PORT + crypto.randomInt(Math.max(1, MAX_PORT - MIN_PORT + 1))
-    if (!used.has(port)) return port
+function clientPlatform(userAgent = '') {
+  if (/android|iphone|ipad|ipod|mobile/i.test(userAgent)) return 'mobile'
+  if (/windows|macintosh|linux|x11/i.test(userAgent)) return 'desktop'
+  return 'unknown'
+}
+
+function safePath(requestUrl = '/') {
+  let pathname = '/'
+  try {
+    pathname = new URL(requestUrl, 'http://remote-proxy').pathname
+  } catch {}
+  return pathname
+    .split('/')
+    .map(segment => segment.length > 48 || /^[\da-f]{24,}$/i.test(segment) ? '[redacted]' : segment)
+    .join('/')
+    .slice(0, 300)
+}
+
+function safeHost(value) {
+  try {
+    return new URL(value).host
+  } catch {
+    return null
   }
-  throw new Error('Remote proxy port range penuh')
+}
+
+function cookieSummary(cookieHeader = '') {
+  return String(cookieHeader)
+    .split(';')
+    .map(part => part.trim().split('=', 1)[0])
+    .filter(Boolean)
+}
+
+function setCookieSummary(setCookie = []) {
+  return setCookie.map(value => {
+    const [pair, ...attributes] = value.split(';')
+    const attributeValue = name => attributes
+      .find(attribute => new RegExp(`^\\s*${name}=`, 'i').test(attribute))
+      ?.split('=', 2)[1]?.trim() || null
+    return {
+      name: pair.split('=', 1)[0].trim(),
+      domain: attributeValue('domain'),
+      path: attributeValue('path'),
+      expires: attributeValue('expires'),
+      maxAge: attributeValue('max-age'),
+      httpOnly: attributes.some(attribute => /^\s*httponly\s*$/i.test(attribute)),
+      secure: attributes.some(attribute => /^\s*secure\s*$/i.test(attribute)),
+      sameSite: attributes.find(attribute => /^\s*samesite=/i.test(attribute))?.split('=', 2)[1]?.trim() || null,
+    }
+  })
+}
+
+function logRemoteDiagnostic(data) {
+  if (DIAGNOSTICS_ENABLED) console.info('[remote-diag]', JSON.stringify(data))
+}
+
+function trackSocket(session, socket) {
+  if (session.trackedSockets.has(socket)) return
+  session.trackedSockets.add(socket)
+  session.connections.add(socket)
+  socket.once('close', () => session.connections.delete(socket))
 }
 
 function closeSession(session) {
   if (!session || session.closed) return
   session.closed = true
-  session.server.close()
+  session.server.close(() => releaseRemotePort(session.port))
   for (const socket of session.connections) socket.destroy()
   sessions.delete(session.id)
 }
@@ -47,6 +104,36 @@ function buildPublicUrl(publicUrl, port) {
   }
 }
 
+function formatHost(host) {
+  return host.includes(':') ? `[${host}]` : host
+}
+
+function rewriteProxyOrigin(value, proxyUrl, targetOrigin, preservePath = false) {
+  if (!value) return value
+  try {
+    const parsed = new URL(value)
+    if (parsed.host === proxyUrl.host) {
+      return preservePath
+        ? `${targetOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`
+        : targetOrigin
+    }
+  } catch {}
+  return value
+}
+
+function rewriteLocation(value, targetHost, targetPort, publicUrl) {
+  if (!value) return value
+  try {
+    const location = new URL(value)
+    const locationHost = location.hostname.replace(/^\[|\]$/g, '')
+    const locationPort = Number(location.port || (location.protocol === 'https:' ? 443 : 80))
+    if (locationHost === targetHost && locationPort === targetPort) {
+      return `${publicUrl}${location.pathname}${location.search}${location.hash}`
+    }
+  } catch {}
+  return value
+}
+
 const cleanupTimer = setInterval(() => {
   const now = Date.now()
   for (const session of sessions.values()) {
@@ -55,7 +142,10 @@ const cleanupTimer = setInterval(() => {
 }, 30_000)
 cleanupTimer.unref()
 
-export async function createRemoteSession({ targetHost, targetPort = 80, ownerId, customerId, publicUrl = PUBLIC_URL }) {
+export async function createRemoteSession({
+  targetHost, targetPort = 80, ownerId, customerId, publicUrl = PUBLIC_URL,
+  onuSerial = null, onuIndex = null, onuModel = null, oltVendor = null, oltModel = null, clientUserAgent = '',
+}) {
   if (!net.isIP(targetHost)) throw new Error('IP ONU tidak valid')
   if (!Number.isInteger(Number(targetPort)) || Number(targetPort) < 1 || Number(targetPort) > 65535) {
     throw new Error('Port ONU tidak valid')
@@ -63,33 +153,94 @@ export async function createRemoteSession({ targetHost, targetPort = 80, ownerId
   if (sessions.size >= MAX_SESSIONS) throw new Error('Jumlah sesi remote sedang penuh')
 
   const id = crypto.randomUUID()
-  const port = pickPort()
-  const server = net.createServer((client) => {
+  const port = allocateRemotePort(MIN_PORT, MAX_PORT)
+  const numericTargetPort = Number(targetPort)
+  const targetOrigin = `http://${formatHost(targetHost)}${numericTargetPort === 80 ? '' : `:${numericTargetPort}`}`
+  const publicSessionUrl = buildPublicUrl(publicUrl, port)
+  const proxyUrl = new URL(publicSessionUrl)
+  const server = http.createServer((clientReq, clientRes) => {
     const session = sessions.get(id)
-    if (!session || session.closed) return client.destroy()
-    session.connections.add(client)
+    if (!session || session.closed) return clientRes.destroy()
     session.lastActivityAt = Date.now()
 
-    const upstream = net.createConnection({ host: targetHost, port: Number(targetPort) })
-    session.connections.add(upstream)
-    upstream.setTimeout(CONNECT_TIMEOUT_MS, () => upstream.destroy())
-    upstream.once('connect', () => upstream.setTimeout(0))
-    const touch = () => { session.lastActivityAt = Date.now() }
-    client.on('data', touch)
-    upstream.on('data', touch)
-    client.pipe(upstream)
-    upstream.pipe(client)
-
-    const closePair = () => {
-      session.connections.delete(client)
-      session.connections.delete(upstream)
-      client.destroy()
-      upstream.destroy()
+    const requestInfo = {
+      event: 'request',
+      session: id.slice(0, 8),
+      platform: clientPlatform(clientReq.headers['user-agent']),
+      userAgent: String(clientReq.headers['user-agent'] || '').slice(0, 240),
+      onuIp: targetHost,
+      onuModel: onuModel || 'unknown (not stored)',
+      onuSerialSuffix: onuSerial ? String(onuSerial).slice(-4) : null,
+      onuIndex: onuIndex || null,
+      oltVendor: oltVendor || null,
+      oltModel: oltModel || null,
+      method: clientReq.method,
+      path: safePath(clientReq.url),
+      hasQuery: String(clientReq.url || '').includes('?'),
+      contentType: clientReq.headers['content-type'] || null,
+      originHost: clientReq.headers.origin ? safeHost(clientReq.headers.origin) : null,
+      refererPath: clientReq.headers.referer ? safePath(clientReq.headers.referer) : null,
+      cookieNames: cookieSummary(clientReq.headers.cookie),
+      authorizationPresent: Boolean(clientReq.headers.authorization),
     }
-    client.on('error', closePair)
-    upstream.on('error', closePair)
-    client.on('close', closePair)
-    upstream.on('close', closePair)
+    logRemoteDiagnostic(requestInfo)
+
+    const headers = { ...clientReq.headers }
+    headers.host = numericTargetPort === 80 ? targetHost : `${formatHost(targetHost)}:${numericTargetPort}`
+    if (headers.origin) headers.origin = rewriteProxyOrigin(headers.origin, proxyUrl, targetOrigin)
+    if (headers.referer) headers.referer = rewriteProxyOrigin(headers.referer, proxyUrl, targetOrigin, true)
+
+    const upstream = http.request({
+      host: targetHost,
+      port: numericTargetPort,
+      method: clientReq.method,
+      path: clientReq.url,
+      headers,
+      timeout: CONNECT_TIMEOUT_MS,
+    }, (upstreamRes) => {
+      session.lastActivityAt = Date.now()
+      const responseHeaders = { ...upstreamRes.headers }
+      if (responseHeaders.location) {
+        responseHeaders.location = rewriteLocation(responseHeaders.location, targetHost, numericTargetPort, publicSessionUrl)
+      }
+      if (responseHeaders['set-cookie']) {
+        responseHeaders['set-cookie'] = responseHeaders['set-cookie'].map(cookie =>
+          cookie.replace(/;\s*domain=[^;]*/i, ''))
+      }
+      logRemoteDiagnostic({
+        ...requestInfo,
+        event: 'response',
+        status: upstreamRes.statusCode || 502,
+        setCookies: setCookieSummary(responseHeaders['set-cookie'] || []),
+        locationPath: responseHeaders.location ? safePath(responseHeaders.location) : null,
+        server: responseHeaders.server || null,
+        responseContentType: responseHeaders['content-type'] || null,
+      })
+      clientRes.writeHead(upstreamRes.statusCode || 502, responseHeaders)
+      upstreamRes.on('data', () => { session.lastActivityAt = Date.now() })
+      upstreamRes.pipe(clientRes)
+    })
+
+    upstream.on('socket', socket => {
+      trackSocket(session, socket)
+    })
+    upstream.on('timeout', () => upstream.destroy(new Error('ONU request timeout')))
+    upstream.on('error', error => {
+      logRemoteDiagnostic({
+        ...requestInfo,
+        event: 'upstream-error',
+        error: error.message,
+      })
+      if (!clientRes.headersSent) clientRes.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })
+      clientRes.end('Koneksi ke ONU gagal')
+    })
+    clientReq.on('data', () => { session.lastActivityAt = Date.now() })
+    clientReq.pipe(upstream)
+  })
+  server.on('connection', socket => {
+    const session = sessions.get(id)
+    if (!session) return socket.destroy()
+    trackSocket(session, socket)
   })
 
   const session = {
@@ -99,6 +250,7 @@ export async function createRemoteSession({ targetHost, targetPort = 80, ownerId
     port,
     server,
     connections: new Set(),
+    trackedSockets: new WeakSet(),
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
     expiresAt: Date.now() + TTL_MS,
@@ -119,14 +271,29 @@ export async function createRemoteSession({ targetHost, targetPort = 80, ownerId
     server.listen(port, BIND_HOST)
   }).catch(error => {
     server.close()
+    releaseRemotePort(port)
     throw new Error(`Gagal membuka port remote: ${error.code || error.message}`)
   })
 
   sessions.set(id, session)
   server.on('error', () => closeSession(session))
+  logRemoteDiagnostic({
+    event: 'session-created',
+    session: id.slice(0, 8),
+    version: 'v1',
+    platform: clientPlatform(clientUserAgent),
+    userAgent: String(clientUserAgent || '').slice(0, 240),
+    onuIp: targetHost,
+    onuModel: onuModel || 'unknown (not stored)',
+    onuSerialSuffix: onuSerial ? String(onuSerial).slice(-4) : null,
+    onuIndex: onuIndex || null,
+    oltVendor: oltVendor || null,
+    oltModel: oltModel || null,
+    proxyPort: port,
+  })
   return {
     id,
-    url: buildPublicUrl(publicUrl, port),
+    url: publicSessionUrl,
     port,
     expiresAt: new Date(session.expiresAt).toISOString(),
   }

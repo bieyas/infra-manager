@@ -4,7 +4,7 @@ import { authenticate, requireRole } from '../middleware/auth.js'
 import { createDriver, driverInfo }  from '../drivers/registry.js'
 import { withDriver }                from '../drivers/BaseDriver.js'
 import { getSnapshot, setSnapshot, invalidateSnapshot, cacheStats } from '../lib/snapshotCache.js'
-import { selectCustomerForDevice }   from '../lib/customerSync.js'
+import { matchCustomerForDevice }   from '../lib/customerSync.js'
 
 const router = Router()
 router.use(authenticate)
@@ -19,6 +19,7 @@ async function getDeviceWithCreds(id) {
       id: true, name: true, ip: true, type: true,
       vendor: true, model: true,
       mgmtProtocol: true, mgmtPort: true, mgmtUsername: true,
+      ponCount: true,
       mgmtPassword: true,   // encrypted — driver will decrypt
       snmpCommunity: true,  // encrypted — driver will decrypt
       snmpVersion: true,
@@ -86,7 +87,7 @@ router.get('/:deviceId/info', async (req, res, next) => {
   try {
     const device = await prisma.device.findUnique({
       where:  { id: req.params.deviceId },
-      select: { id: true, type: true, vendor: true, model: true },
+      select: { id: true, type: true, vendor: true, model: true, mgmtProtocol: true },
     })
     if (!device) return res.status(404).json({ error: 'Device not found' })
 
@@ -256,6 +257,15 @@ router.get('/:deviceId/snapshot', requireRole('ADMIN', 'TECHNICIAN'), async (req
             ? await d.getResource().catch(() => null)
             : null
         }
+        let ethernetInterfaces = null
+        let ethernetInterfacesError = null
+        if (capabilities.ethernetInterfaces) {
+          try {
+            ethernetInterfaces = await d.getEthernetInterfaces()
+          } catch (error) {
+            ethernetInterfacesError = error.message
+          }
+        }
         // getPonPorts returns { ports, globalOnline, globalTotal }
         let ponPorts      = ponResult?.ports    || (Array.isArray(ponResult) ? ponResult : null)
         const globalOnline = ponResult?.globalOnline || null
@@ -286,6 +296,7 @@ router.get('/:deviceId/snapshot', requireRole('ADMIN', 'TECHNICIAN'), async (req
 
         return {
           status, interfaces: ponPorts, ponPorts,
+          ethernetInterfaces, ethernetInterfacesError,
           globalOnline, globalTotal,
           ipAddresses: null, routes: null, neighbors: null,
           resource: resource ?? null,
@@ -402,14 +413,32 @@ router.get('/:deviceId/customer-import-preview', requireRole('ADMIN', 'TECHNICIA
       : []
     const existingByUsername = new Map(usernames.map(username => [
       username.toLowerCase(),
-      selectCustomerForDevice(existingCustomers, username, device.id),
+      matchCustomerForDevice(existingCustomers, username, device.id),
     ]))
     const secretByUsername = new Map(secrets.filter(secret => secret.username).map(secret => [secret.username.toLowerCase(), secret]))
 
     const usedIds = new Set(existingCustomers.map(customer => customer.customerId))
     const rows = await Promise.all(sessions.map(async session => {
       const secret = secretByUsername.get(session.username?.toLowerCase())
-      const existing = existingByUsername.get(session.username?.toLowerCase()) ?? null
+      const match = existingByUsername.get(session.username?.toLowerCase())
+      const existing = match.customer
+      if (match.ambiguous) {
+        return {
+          username: session.username,
+          service: session.service,
+          address: session.address,
+          callerId: session.callerId,
+          uptime: session.uptime,
+          profile: secret?.profile ?? null,
+          rateLimit: secret?.rateLimit ?? null,
+          comment: session.comment || secret?.comment || null,
+          normalizedName: null,
+          suggestedCustomerId: null,
+          existing: null,
+          action: 'AMBIGUOUS',
+          error: 'Ada beberapa data pelanggan dengan username PPPoE ini; perlu pemeriksaan manual.',
+        }
+      }
       const comment = session.comment || secret?.comment
       const identity = await resolveCustomerIdentity(comment, usedIds, existing?.id)
       return {
@@ -434,6 +463,7 @@ router.get('/:deviceId/customer-import-preview', requireRole('ADMIN', 'TECHNICIA
       total: rows.length,
       create: rows.filter(row => row.action === 'CREATE').length,
       update: rows.filter(row => row.action === 'UPDATE').length,
+      ambiguous: rows.filter(row => row.action === 'AMBIGUOUS').length,
       rows,
       fetchedAt: new Date(),
     })
@@ -476,7 +506,7 @@ router.post('/:deviceId/customer-import', requireRole('ADMIN', 'TECHNICIAN'), as
     ])
     const existingByUsername = new Map(selectedNames.map(username => [
       username.toLowerCase(),
-      selectCustomerForDevice(existingCustomers, username, device.id),
+      matchCustomerForDevice(existingCustomers, username, device.id),
     ]))
     const secretByUsername = new Map(imported.secrets.filter(secret => secret.username).map(secret => [secret.username.toLowerCase(), secret]))
     const results = []
@@ -484,7 +514,16 @@ router.post('/:deviceId/customer-import', requireRole('ADMIN', 'TECHNICIAN'), as
 
     for (const session of selected) {
       const secret = secretByUsername.get(session.username.toLowerCase())
-      const existing = existingByUsername.get(session.username.toLowerCase())
+      const match = existingByUsername.get(session.username.toLowerCase())
+      const existing = match.customer
+      if (match.ambiguous) {
+        results.push({
+          username: session.username,
+          action: 'ERROR',
+          error: 'Ada beberapa data pelanggan dengan username PPPoE ini; perlu pemeriksaan manual.',
+        })
+        continue
+      }
       const comment = session.comment || secret?.comment
       const normalized = normalizeCustomerComment(comment)
       const identity = await resolveCustomerIdentity(comment, usedIds, existing?.id)

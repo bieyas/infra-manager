@@ -42,7 +42,7 @@ enum Role {
 model Device {
   id            String        @id @default(cuid())
   name          String
-  ip            String        @unique
+  ip            String
   type          DeviceType
   vendor        String?
   model         String?
@@ -55,7 +55,7 @@ model Device {
 
   // ── Management access ──────────────────────────────────────────────────
   mgmtProtocol  MgmtProtocol? // SSH, TELNET, SNMP, API, WEB
-  mgmtPort      Int?           // override default port (e.g. 8728 for API)
+  mgmtPort      Int?           // management or NAT-forwarded external port
   mgmtUsername  String?
   mgmtPassword  String?        // stored AES-256-GCM encrypted by backend
   snmpCommunity String?        // SNMP v1/v2c community string (encrypted)
@@ -89,6 +89,8 @@ model Device {
   ipamHosts     Host[]
   pppoeSessions PppoeSession[]
   sourcedCustomers Customer[] @relation("CustomerSourceDevice")
+
+  @@unique([ip, mgmtPort])
 }
 
 // ── Physical/logical link between two device ports ────────────────────────
@@ -552,6 +554,7 @@ model Customer {
   connectionStatus CustomerConnectionStatus @default(UNKNOWN)
   connectionSourceDeviceId String?
   sourceDevice    Device?  @relation("CustomerSourceDevice", fields: [connectionSourceDeviceId], references: [id], onDelete: SetNull)
+  trafficSamples  CustomerTrafficSample[]
   connectionLastSeen DateTime?
   connectionLastChecked DateTime?
 
@@ -566,6 +569,18 @@ model Customer {
   updatedAt       DateTime   @updatedAt
 
   @@index([connectionSourceDeviceId, pppoeUsername])
+}
+
+model CustomerTrafficSample {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  sampledAt  DateTime @default(now())
+  inBps      Float    @default(0)
+  outBps     Float    @default(0)
+
+  @@unique([customerId, sampledAt])
+  @@index([customerId, sampledAt])
 }
 
 enum SplitterRatio {
@@ -907,4 +922,12 @@ model CoverageZone {
 
   @@index([odcId])
   @@index([isActive])
+}
+
+model RemoteOnuSetting {
+  id                String   @id @default("remote-onu")
+  version           String   @default("v1")
+  natIngressInterface String?
+  natSourceCidr      String?
+  updatedAt          DateTime @updatedAt
 }

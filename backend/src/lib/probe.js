@@ -1,5 +1,6 @@
 import net      from 'net'
 import { exec } from 'child_process'
+import { SnmpClient, OID } from './snmpClient.js'
 
 /**
  * TCP connect probe — tries to open a TCP connection to host:port.
@@ -51,35 +52,62 @@ export function probePing(host, timeoutMs = 3000) {
 }
 
 /**
- * Full probe strategy for a device:
- * 1. Try ICMP ping first (fast, no port needed)
- * 2. If ping fails/unavailable, try TCP on management port
- * 3. If no mgmt port, try common ports: 22, 23, 80, 443, 8728
+ * Probe the configured management endpoint first so multiple devices behind
+ * the same NAT address are checked independently.
  *
  * Returns { alive, latencyMs, method }
  */
-export async function probeDevice({ ip, mgmtPort, mgmtProtocol }) {
-  // 1. ICMP ping
+export async function probeDevice({ ip, mgmtPort, mgmtProtocol, community, snmpCommunity, snmpVersion }) {
+  if (mgmtProtocol === 'SNMP') {
+    return probeSnmp(ip, mgmtPort, community ?? snmpCommunity, snmpVersion)
+  }
+
+  const port = mgmtPort ?? defaultPort(mgmtProtocol)
+  if (port) {
+    const r = await probeTcp(ip, port)
+    return {
+      alive: r.alive,
+      latencyMs: r.alive ? r.latencyMs : null,
+      method: `tcp:${port}`,
+    }
+  }
+
   const pingResult = await probePing(ip)
   if (pingResult.alive) {
     return { alive: true, latencyMs: pingResult.latencyMs, method: 'icmp' }
   }
 
-  // 2. TCP on configured management port
-  const port = mgmtPort || defaultPort(mgmtProtocol)
-  if (port) {
-    const r = await probeTcp(ip, port)
-    if (r.alive) return { alive: true, latencyMs: r.latencyMs, method: `tcp:${port}` }
-  }
-
-  // 3. Try well-known ports
-  const fallbacks = [22, 23, 80, 443, 8728].filter(p => p !== port)
+  const fallbacks = [22, 23, 80, 443, 8728]
   for (const p of fallbacks) {
     const r = await probeTcp(ip, p, 1500)
     if (r.alive) return { alive: true, latencyMs: r.latencyMs, method: `tcp:${p}` }
   }
 
   return { alive: false, latencyMs: null, method: 'none' }
+}
+
+async function probeSnmp(host, port, community, version) {
+  if (community === null) {
+    return { alive: false, latencyMs: null, method: 'snmp-config-error' }
+  }
+
+  const startedAt = Date.now()
+  let client
+  try {
+    client = new SnmpClient(host, {
+      community: community || 'public',
+      version: version || '2c',
+      port: port || 161,
+      timeout: 2000,
+      retries: 0,
+    })
+    const descr = await client.getValue(OID.sysDescr)
+    return { alive: descr !== null, latencyMs: Date.now() - startedAt, method: 'snmp' }
+  } catch (_) {
+    return { alive: false, latencyMs: null, method: 'snmp' }
+  } finally {
+    client?.close()
+  }
 }
 
 function defaultPort(protocol) {

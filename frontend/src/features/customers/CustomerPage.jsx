@@ -314,7 +314,7 @@ export default function CustomerPage() {
       </div>
       <div className="hidden md:block">
         {stats.customerSync?.map(router => (
-          <div key={router.deviceId} className={`text-[10px] ${router.status === 'ERROR' ? 'text-rose-400' : router.status === 'RUNNING' ? 'text-amber-400' : 'text-muted'}`}>
+          <div key={router.deviceId} className={`text-[10px] ${router.status === 'ERROR' ? 'text-rose-400' : ['RUNNING', 'WARNING'].includes(router.status) ? 'text-amber-400' : 'text-muted'}`}>
             Sync {router.deviceName}: {router.status.toLowerCase()}
             {router.lastSyncAt && ` • ${new Date(router.lastSyncAt).toLocaleString('id-ID')}`}
             {router.error && ` • ${router.error}`}

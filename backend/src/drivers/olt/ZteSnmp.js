@@ -210,12 +210,13 @@ export class ZteSnmpDriver extends GenericSnmpDriver {
     const portIndex      = ZteSnmpDriver.portIndex(slot, port)
 
     // Phase 1: Probe all ONU status IDs in one parallel batch
-    const statusResults = await Promise.all(
-      Array.from({ length: maxOnu }, async (_, i) => {
-        const onuId = i + 1
-        const val   = await this._onuGet(ZteSnmpDriver._OID.onuStatus, portIndex, onuId)
+    const statusResults = await this._mapBatches(
+      Array.from({ length: maxOnu }, (_, i) => i + 1),
+      16,
+      async onuId => {
+        const val = await this._onuGet(ZteSnmpDriver._OID.onuStatus, portIndex, onuId)
         return val != null ? { onuId, statusRaw: Number(val) } : null
-      })
+      },
     )
 
     // Filter registered ONUs (those with a status response)
@@ -224,8 +225,7 @@ export class ZteSnmpDriver extends GenericSnmpDriver {
     if (registered.length === 0) return []
 
     // Phase 2: Fetch name + Rx power for registered ONUs only
-    const onus = await Promise.all(
-      registered.map(async ({ onuId, statusRaw }) => {
+    const onus = await this._mapBatches(registered, 16, async ({ onuId, statusRaw }) => {
         const [name, rxRaw] = await Promise.all([
           this._onuGet(ZteSnmpDriver._OID.onuName, portIndex, onuId),
           this._fetchRxPower(portIndex, onuId),
@@ -247,7 +247,6 @@ export class ZteSnmpDriver extends GenericSnmpDriver {
           protocol:   'snmp',
         }
       })
-    )
 
     return onus.sort((a, b) => a.onuId - b.onuId)
   }
@@ -400,5 +399,14 @@ export class ZteSnmpDriver extends GenericSnmpDriver {
     const [portPart, onuIdStr] = String(str).split(':')
     const { slot, port } = this._parsePonPort(portPart)
     return { slot, port, onuId: Number(onuIdStr) }
+  }
+
+  async _mapBatches(items, batchSize, mapper) {
+    const results = []
+    for (let offset = 0; offset < items.length; offset += batchSize) {
+      const batch = items.slice(offset, offset + batchSize)
+      results.push(...await Promise.all(batch.map(mapper)))
+    }
+    return results
   }
 }

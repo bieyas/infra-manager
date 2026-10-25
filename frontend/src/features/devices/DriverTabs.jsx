@@ -465,6 +465,7 @@ export function SessionTab({ deviceId, sessions, secrets, sourceErrors, loading,
             <Badge variant="neutral">{preview.total} total</Badge>
             <Badge variant="online">{preview.create} create</Badge>
             <Badge variant="info">{preview.update} update</Badge>
+            {preview.ambiguous > 0 && <Badge variant="warning">{preview.ambiguous} perlu dicek</Badge>}
             <Button variant="primary" size="sm" onClick={importCustomers} disabled={importLoading}>
               {importLoading ? <Loader2 size={12} className="animate-spin" /> : 'Import / Update'}
             </Button>
@@ -484,7 +485,11 @@ export function SessionTab({ deviceId, sessions, secrets, sourceErrors, loading,
                   <td className="px-3 py-2 text-secondary">{row.normalizedName || '—'}</td>
                   <td className="px-3 py-2 font-mono text-secondary">{row.existing?.customerId || row.suggestedCustomerId}</td>
                   <td className="px-3 py-2 text-secondary">{row.existing?.name || 'Belum ada'}</td>
-                  <td className="px-3 py-2"><Badge variant={row.action === 'CREATE' ? 'online' : 'info'}>{row.action}</Badge></td>
+                  <td className="px-3 py-2" title={row.error || undefined}>
+                    <Badge variant={row.action === 'CREATE' ? 'online' : row.action === 'AMBIGUOUS' ? 'warning' : 'info'}>
+                      {row.action}
+                    </Badge>
+                  </td>
                 </tr>
               ))}</tbody>
             </table>

@@ -31,11 +31,12 @@ function Toggle({ checked, onChange }) {
 }
 
 /* ── Select helper ──────────────────────────────────────────────────────────── */
-function Select({ value, onChange, children, className }) {
+function Select({ value, onChange, children, className, disabled }) {
   return (
     <select
       value={value}
       onChange={e => onChange(e.target.value)}
+      disabled={disabled}
       className={clsx(
         'w-full px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] text-primary',
         'focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)]/30 transition-all',
@@ -117,6 +118,15 @@ export default function Settings() {
     sourceCidr: '',
   })
 
+  const [remoteProxy, setRemoteProxy] = useState({
+    version: 'v1',
+    ingressInterface: '',
+    sourceCidr: '',
+    helperReady: false,
+  })
+  const [remoteProxyLoading, setRemoteProxyLoading] = useState(false)
+  const [remoteProxySaving, setRemoteProxySaving] = useState(false)
+
   const [mapCenter, setMapCenterState] = useState({
     lat: mapSettings.defaultCenter.lat.toString(),
     lng: mapSettings.defaultCenter.lng.toString(),
@@ -133,6 +143,17 @@ export default function Settings() {
       } catch {}
     }
   }, [])
+
+  useEffect(() => {
+    if (user?.role !== 'ADMIN') return
+    let cancelled = false
+    setRemoteProxyLoading(true)
+    api.get('/settings/remote-onu')
+      .then(settings => { if (!cancelled) setRemoteProxy(settings) })
+      .catch(error => { if (!cancelled) toast.error(error.message || 'Gagal memuat versi remote ONU') })
+      .finally(() => { if (!cancelled) setRemoteProxyLoading(false) })
+    return () => { cancelled = true }
+  }, [user?.role, toast])
 
   const set = (key, val) => setPrefs(p => ({ ...p, [key]: val }))
 
@@ -155,6 +176,23 @@ export default function Settings() {
       toast.error('Gagal menyalin konfigurasi')
     }
   }, [nat, toast])
+
+  const saveRemoteProxy = useCallback(async () => {
+    try {
+      setRemoteProxySaving(true)
+      const settings = await api.patch('/settings/remote-onu', {
+        version: remoteProxy.version,
+        ingressInterface: remoteProxy.ingressInterface,
+        sourceCidr: remoteProxy.sourceCidr,
+      })
+      setRemoteProxy(settings)
+      toast.success(`Remote ONU ${settings.version.toUpperCase()} aktif`)
+    } catch (error) {
+      toast.error(error.message || 'Gagal mengganti versi remote ONU')
+    } finally {
+      setRemoteProxySaving(false)
+    }
+  }, [remoteProxy, toast])
 
   const saveMapCenter = useCallback(() => {
     const lat = parseFloat(mapCenter.lat)
@@ -471,17 +509,69 @@ export default function Settings() {
           <Card>
             <CardHeader>
               <Network size={14} className="accent-text" />
-              <span className="text-sm font-semibold text-primary">Remote ONU melalui NAT</span>
+              <span className="text-sm font-semibold text-primary">Engine Remote ONU</span>
+            </CardHeader>
+            <CardBody className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-secondary">Versi aktif</label>
+                <Select
+                  value={remoteProxy.version}
+                  onChange={version => setRemoteProxy(settings => ({ ...settings, version }))}
+                  className="max-w-xs"
+                  disabled={remoteProxyLoading || remoteProxySaving}
+                >
+                  <option value="v1">v1 · HTTP relay</option>
+                  <option value="v2">v2 · NAT server native</option>
+                </Select>
+              </div>
+              {remoteProxy.version === 'v2' && (
+                <>
+                  <div className={`rounded-lg border p-3 text-[10px] leading-relaxed ${remoteProxy.helperReady ? 'border-emerald-500/25 bg-emerald-500/10 text-secondary' : 'border-amber-500/25 bg-amber-500/10 text-secondary'}`}>
+                    {remoteProxy.helperReady
+                      ? 'Helper NAT siap. Rule DNAT, SNAT, dan forwarding dibuat per sesi lalu dihapus saat sesi berakhir.'
+                      : 'Helper belum siap. Pasang helper root-owned dan izin sudo non-interaktif terbatas sebelum mengaktifkan v2. Username/password root tidak disimpan di aplikasi.'}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-secondary">Interface ingress publik</label>
+                      <Input
+                        value={remoteProxy.ingressInterface || ''}
+                        onChange={e => setRemoteProxy(settings => ({ ...settings, ingressInterface: e.target.value }))}
+                        placeholder="enp0s25"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-secondary">Allowlist sumber (IPv4 CIDR)</label>
+                      <Input
+                        value={remoteProxy.sourceCidr || ''}
+                        onChange={e => setRemoteProxy(settings => ({ ...settings, sourceCidr: e.target.value }))}
+                        placeholder="203.0.113.10/32"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted">Helper: <code>/usr/local/sbin/infra-manager-onu-nat</code>. Beri user backend akses sudo hanya ke helper tersebut.</p>
+                </>
+              )}
+              <Button variant="outline" size="sm" icon={Save} onClick={saveRemoteProxy} disabled={remoteProxyLoading || remoteProxySaving}>
+                {remoteProxySaving ? 'Menyimpan...' : 'Simpan Versi Remote'}
+              </Button>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <Network size={14} className="accent-text" />
+              <span className="text-sm font-semibold text-primary">Preview Rule NAT Manual · Legacy</span>
             </CardHeader>
             <CardBody className="space-y-4">
               <div className="flex items-start gap-2 rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
                 <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-400" />
-                <p className="text-[10px] leading-relaxed text-secondary">NAT membuka port dari internet ke ONU. Batasi sumber dengan CIDR tepercaya, gunakan port publik yang tidak standar, dan terapkan rule hanya setelah diverifikasi di native server.</p>
+                <p className="text-[10px] leading-relaxed text-secondary">Preview ini tidak digunakan oleh engine remote ONU v1/v2. Batasi sumber dengan CIDR tepercaya dan verifikasi rule sebelum menerapkannya manual di server.</p>
               </div>
               <div className="flex items-center justify-between py-1">
                 <div>
-                  <p className="text-xs font-medium text-primary">Konfigurasi aktif</p>
-                  <p className="text-[10px] text-muted">Menandai konfigurasi ini siap diterapkan di native server</p>
+                  <p className="text-xs font-medium text-primary">Sertakan dalam preview</p>
+                  <p className="text-[10px] text-muted">Tidak mengganti versi engine remote ONU</p>
                 </div>
                 <Toggle checked={nat.enabled} onChange={v => setNat(n => ({ ...n, enabled: v }))} />
               </div>
@@ -493,11 +583,11 @@ export default function Settings() {
                 <div className="space-y-1"><label className="text-xs font-medium text-secondary">Port layanan ONU</label><Input type="number" min="1" max="65535" value={nat.targetPort} onChange={e => setNat(n => ({ ...n, targetPort: e.target.value }))} /></div>
                 <div className="space-y-1"><label className="text-xs font-medium text-secondary">Allowlist sumber (CIDR)</label><Input value={nat.sourceCidr} onChange={e => setNat(n => ({ ...n, sourceCidr: e.target.value }))} placeholder="203.0.113.10/32" /></div>
               </div>
-              <div className="flex gap-2 pt-1"><Button variant="outline" size="sm" icon={Save} onClick={savePrefs}>Simpan Konfigurasi</Button><Button variant="ghost" size="sm" icon={Copy} onClick={copyNatConfig}>Salin Rule nftables</Button></div>
+              <div className="flex gap-2 pt-1"><Button variant="outline" size="sm" icon={Save} onClick={savePrefs}>Simpan Preview</Button><Button variant="ghost" size="sm" icon={Copy} onClick={copyNatConfig}>Salin Rule nftables</Button></div>
             </CardBody>
           </Card>
           <Card>
-            <CardHeader><Shield size={14} className="accent-text" /><span className="text-sm font-semibold text-primary">Preview Rule</span></CardHeader>
+            <CardHeader><Shield size={14} className="accent-text" /><span className="text-sm font-semibold text-primary">Preview Rule Manual</span></CardHeader>
             <CardBody><pre className="overflow-x-auto rounded-lg bg-black/20 p-3 text-[10px] leading-relaxed text-secondary whitespace-pre-wrap break-all">{buildNftConfig(nat)}</pre></CardBody>
           </Card>
         </div>

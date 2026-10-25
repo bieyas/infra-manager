@@ -1,9 +1,10 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   X, User, MapPin, Wifi, Package, Phone, Calendar,
-  Network, Hash, Loader2, AlertCircle, ExternalLink, Copy, Router,
+  Network, Hash, Loader2, AlertCircle, ExternalLink, Copy, Router, Activity,
 } from 'lucide-react'
 import Badge from '../../components/ui/Badge'
+import TrafficAreaChart from '../../components/ui/TrafficAreaChart'
 import { useCustomerDetail, STATUS_CFG, CONNECTION_CFG } from './useCustomers'
 import { useToast } from '../../context/ToastContext'
 import { api } from '../../lib/api'
@@ -83,6 +84,78 @@ export default function CustomerDetail({ customerId, onClose }) {
   const { data: c, loading, error } = useCustomerDetail(customerId)
   const toast = useToast()
   const [remoteLoading, setRemoteLoading] = useState(false)
+  const [trafficRange, setTrafficRange] = useState('24h')
+  const [trafficMode, setTrafficMode] = useState('history')
+  const [liveInterval, setLiveInterval] = useState(2)
+  const [trafficSeries, setTrafficSeries] = useState([])
+  const [liveSeries, setLiveSeries] = useState([])
+  const [livePoint, setLivePoint] = useState(null)
+  const [trafficLoading, setTrafficLoading] = useState(false)
+  const [trafficError, setTrafficError] = useState(null)
+  const sourceDeviceId = c?.sourceDevice?.id
+
+  useEffect(() => {
+    let cancelled = false
+    if (!c?.pppoeUsername || !c?.sourceDevice) {
+      setTrafficSeries([])
+      return undefined
+    }
+    if (trafficMode === 'live') return undefined
+    setTrafficLoading(true)
+    setTrafficError(null)
+    api.get(`/customers/${customerId}/traffic/series?range=${trafficRange}`)
+      .then(result => {
+        if (cancelled) return
+        setTrafficSeries((result.samples || []).map(sample => ({
+          time: new Date(sample.timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+          in: Number(sample.inBps || 0) / 1_000_000,
+          out: Number(sample.outBps || 0) / 1_000_000,
+        })))
+      })
+      .catch(e => {
+        if (!cancelled) setTrafficError(e.message || 'Grafik trafik tidak tersedia')
+      })
+      .finally(() => { if (!cancelled) setTrafficLoading(false) })
+    return () => {
+      cancelled = true
+    }
+  }, [c?.pppoeUsername, sourceDeviceId, customerId, trafficRange, trafficMode])
+
+  useEffect(() => {
+    if (trafficMode !== 'live' || !c?.pppoeUsername || !c?.sourceDevice) return undefined
+    let cancelled = false
+    let timer
+    setLiveSeries([])
+    setLivePoint(null)
+    const poll = async () => {
+      if (document.hidden) return
+      try {
+        const point = await api.get(`/customers/${customerId}/traffic/live`)
+        if (!cancelled) {
+          const timestamp = new Date(point.timestamp)
+          if (Number.isNaN(timestamp.getTime())) throw new Error('Timestamp data live tidak valid')
+          const nextPoint = {
+            timestamp: timestamp.getTime(),
+            time: timestamp.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+            in: Number(point.inBps || 0) / 1_000_000,
+            out: Number(point.outBps || 0) / 1_000_000,
+          }
+          setLivePoint(nextPoint)
+          setLiveSeries(previous => previous.some(item => item.timestamp === nextPoint.timestamp)
+            ? previous
+            : [...previous, nextPoint].slice(-60))
+        }
+      } catch (e) {
+        if (!cancelled) setTrafficError(e.message || 'Data live tidak tersedia')
+      } finally {
+        if (!cancelled) timer = setTimeout(poll, liveInterval * 1000)
+      }
+    }
+    setTrafficLoading(true)
+    setTrafficError(null)
+    poll().finally(() => { if (!cancelled) setTrafficLoading(false) })
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [c?.pppoeUsername, sourceDeviceId, customerId, trafficMode, liveInterval])
 
   const openRemoteOnu = async () => {
     const popup = window.open('about:blank', '_blank')
@@ -164,6 +237,35 @@ export default function CustomerDetail({ customerId, onClose }) {
           )}
           {c && (
             <>
+              <Section title="Trafik PPPoE" icon={Activity}>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <span className="text-[10px] text-muted font-mono truncate">pppoe-{c.pppoeUsername}</span>
+                  <div className="flex items-center gap-1">
+                    <button type="button" onClick={() => setTrafficMode('history')} className={`text-[10px] px-2 py-1 rounded border ${trafficMode === 'history' ? 'bg-[var(--accent-glow)] border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--border)] text-muted'}`}>Histori</button>
+                    <button type="button" onClick={() => setTrafficMode('live')} className={`text-[10px] px-2 py-1 rounded border ${trafficMode === 'live' ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' : 'border-[var(--border)] text-muted'}`}>Live</button>
+                    {trafficMode === 'live' && <select value={liveInterval} onChange={event => setLiveInterval(Number(event.target.value))} className="text-[10px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1.5 py-1 text-primary" aria-label="Interval polling trafik live">
+                      <option value={1}>1s</option>
+                      <option value={2}>2s</option>
+                      <option value={5}>5s</option>
+                    </select>}
+                    {trafficMode === 'history' && <select value={trafficRange} onChange={event => setTrafficRange(event.target.value)} className="text-[10px] bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-1.5 py-1 text-primary" aria-label="Rentang grafik trafik">
+                      <option value="1h">1 jam</option>
+                      <option value="6h">6 jam</option>
+                      <option value="24h">24 jam</option>
+                      <option value="7d">7 hari</option>
+                      <option value="30d">30 hari</option>
+                    </select>}
+                  </div>
+                </div>
+                <div className="min-h-[180px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] overflow-hidden flex items-center justify-center">
+                  {trafficLoading && <Loader2 size={18} className="animate-spin text-[var(--accent)]" />}
+                  {!trafficLoading && (trafficMode === 'live' ? Boolean(livePoint) : trafficSeries.length > 0) && (
+                    <TrafficAreaChart data={trafficMode === 'live' ? liveSeries : trafficSeries} />
+                  )}
+                  {!trafficLoading && (trafficMode === 'live' ? !livePoint : trafficSeries.length === 0) && <span className="text-[10px] text-muted text-center px-4">{trafficError || (trafficMode === 'live' ? 'Menunggu data live dari perangkat...' : 'Belum ada sample trafik. Collector berjalan setiap 5 menit.')}</span>}
+                </div>
+              </Section>
+
               {/* Info Umum */}
               <Section title="Info Pelanggan" icon={User}>
                 <Row label="ID Pelanggan"   value={c.customerId} mono />

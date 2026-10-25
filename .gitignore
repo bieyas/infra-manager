@@ -56,3 +56,5 @@ check_*.js
 *_create_new.js
 *.patch
 *.backup
+*.dump
+backend/data/

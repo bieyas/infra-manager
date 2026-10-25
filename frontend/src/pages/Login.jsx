@@ -180,29 +180,6 @@ export default function Login() {
             </button>
           </form>
 
-          {/* Role info hint */}
-          <div className="mt-8 p-4 rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] space-y-1.5">
-            <p className="text-[10px] font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-2">Akun Demo</p>
-            {[
-              { user: 'admin',   pass: 'admin1234',   role: 'Admin',      color: '#f87171' },
-              { user: 'teknisi', pass: 'teknisi1234', role: 'Teknisi',    color: '#fb923c' },
-              { user: 'viewer',  pass: 'viewer1234',  role: 'Viewer',     color: '#4ade80' },
-            ].map(a => (
-              <button
-                key={a.user}
-                type="button"
-                onClick={() => setForm({ username: a.user, password: a.pass })}
-                className="w-full flex items-center justify-between px-3 py-2 rounded-md hover:bg-[var(--bg-card)] transition-colors text-left group"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-[var(--text-primary)] group-hover:text-[var(--accent)] transition-colors">{a.user}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full border" style={{ color: a.color, borderColor: a.color + '40', background: a.color + '12' }}>{a.role}</span>
-                </div>
-                <span className="font-mono text-[10px] text-[var(--text-muted)]">{a.pass}</span>
-              </button>
-            ))}
-            <p className="text-[10px] text-[var(--text-muted)] pt-1">Klik baris untuk mengisi form otomatis</p>
-          </div>
         </div>
       </div>
     </div>

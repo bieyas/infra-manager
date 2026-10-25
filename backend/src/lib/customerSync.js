@@ -67,13 +67,14 @@ export function classifyCustomerConnection({ session = null, secret = null } = {
   }
 }
 
-export function selectCustomerForDevice(customers, username, deviceId) {
+export function matchCustomerForDevice(customers, username, deviceId) {
   const normalizedUsername = String(username || '').toLowerCase()
   const matches = customers.filter(customer => customer.pppoeUsername?.toLowerCase() === normalizedUsername)
-  return matches.find(customer => customer.connectionSourceDeviceId === deviceId)
-    || (matches.filter(customer => !customer.connectionSourceDeviceId).length === 1
-      ? matches.find(customer => !customer.connectionSourceDeviceId)
-      : null)
+  const matchesOnDevice = matches.filter(customer => customer.connectionSourceDeviceId === deviceId)
+
+  if (matchesOnDevice.length === 1) return { customer: matchesOnDevice[0], ambiguous: false }
+  if (matchesOnDevice.length > 1 || matches.length > 1) return { customer: null, ambiguous: true }
+  return { customer: matches[0] || null, ambiguous: false }
 }
 
 function shouldSync(device, force) {
@@ -121,7 +122,7 @@ async function runCustomerSyncNow(device) {
       : []
     const existingByUsername = new Map(usernames.map(username => [
       username.toLowerCase(),
-      selectCustomerForDevice(existing, username, device.id),
+      matchCustomerForDevice(existing, username, device.id),
     ]))
     const secretByUsername = new Map(secrets.filter(secret => secret.username).map(secret => [secret.username.toLowerCase(), secret]))
     const usedIds = new Set(existing.map(customer => customer.customerId))
@@ -134,10 +135,10 @@ async function runCustomerSyncNow(device) {
       const normalizedUsername = username.toLowerCase()
       const session = sessionByUsername.get(normalizedUsername)
       const secret = secretByUsername.get(normalizedUsername)
-      const current = existingByUsername.get(normalizedUsername)
-      const identity = await identityFor(session?.comment || secret?.comment, usedIds, current?.id)
+      const match = existingByUsername.get(normalizedUsername)
+      const current = match.customer
       const { serviceStatus, connectionStatus } = classifyCustomerConnection({ session, secret })
-        await prisma.PppoeSession.upsert({
+      await prisma.PppoeSession.upsert({
         where: { deviceId_username: { deviceId: device.id, username } },
         create: {
           deviceId: device.id,
@@ -169,6 +170,11 @@ async function runCustomerSyncNow(device) {
           lastCheckedAt: checkedAt,
         },
       })
+      if (match.ambiguous) {
+        console.warn(`[customer-sync:${device.id}] Skipped ambiguous PPPoE username "${username}"`)
+        continue
+      }
+      const identity = await identityFor(session?.comment || secret?.comment, usedIds, current?.id)
       const data = {
         pppoeUsername: username,
         serviceStatus,
@@ -205,8 +211,15 @@ async function runCustomerSyncNow(device) {
       where: offlineCustomerWhere,
       data: { connectionStatus: 'OFFLINE', connectionLastChecked: checkedAt },
     })
-    await prisma.device.update({ where: { id: device.id }, data: { customerSyncAt: new Date(), customerSyncStatus: 'SUCCESS', customerSyncError: null } })
-    return { created, updated, total: sessions.length }
+    const ambiguousUsernames = usernames.filter(username => existingByUsername.get(username.toLowerCase()).ambiguous)
+    const warning = ambiguousUsernames.length
+      ? `Ambiguous PPPoE usernames skipped: ${ambiguousUsernames.slice(0, 10).join(', ')}`
+      : null
+    await prisma.device.update({
+      where: { id: device.id },
+      data: { customerSyncAt: new Date(), customerSyncStatus: warning ? 'WARNING' : 'SUCCESS', customerSyncError: warning },
+    })
+    return { created, updated, skipped: ambiguousUsernames.length, total: sessions.length }
   } catch (error) {
     await prisma.device.update({ where: { id: device.id }, data: { customerSyncStatus: 'ERROR', customerSyncError: error.message.slice(0, 500) } }).catch(() => {})
     throw error

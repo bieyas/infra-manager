@@ -21,7 +21,7 @@ export class GenericOltSnmpDriver extends GenericSnmpDriver {
     return {
       ...super.capabilities,
       ontList:    true,
-      pontStatus: true,
+      ponPorts:   true,
     }
   }
 

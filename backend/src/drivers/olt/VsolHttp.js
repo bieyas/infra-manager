@@ -3,17 +3,20 @@ import https from 'https'
 
 // Allow self-signed / expired certs on OLT web UIs
 const _tlsAgent = new https.Agent({ rejectUnauthorized: false })
+const _requestTimeoutMs = 30_000
 
 async function _fetch(url, opts = {}) {
   const isHttps = url.startsWith('https')
   const fetchOpts = { ...opts }
   if (isHttps) fetchOpts.agent = _tlsAgent
-  // Node 18+ builtin fetch doesn't support agent; use undici via env or http module
-  // Use native fetch with NODE_TLS_REJECT_UNAUTHORIZED workaround via env trick
+
+  // Node 18+ builtin fetch doesn't support the classic https.Agent API.
+  // Keep the compatibility fallback while ensuring the request actually uses
+  // the options we built for it.
   const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED
   if (isHttps) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'
   try {
-    return await fetch(url, opts)
+    return await fetch(url, fetchOpts)
   } finally {
     if (isHttps) {
       if (prev === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED
@@ -45,6 +48,7 @@ export class VsolHttpDriver extends BaseDriver {
       resource:    true,
       exec:        false,
       ponPorts:    true,
+      ponPower:    false,
       onuList:     true,
       onuDetail:   true,
     }
@@ -52,10 +56,11 @@ export class VsolHttpDriver extends BaseDriver {
 
   constructor(device, opts) {
     super(device, opts)
-    // Auto-detect HTTPS: protocol=WEB/HTTPS or port=443/2029 hints
+    // WEB is the app's HTTP protocol option; only explicit HTTPS or an
+    // otherwise-unspecified secure web port should select HTTPS.
     const proto = device.mgmtProtocol?.toUpperCase()
-    const useHttps = proto === 'HTTPS' || proto === 'WEB'
-      || [443, 2029, 8443].includes(device.mgmtPort)
+    const useHttps = proto === 'HTTPS'
+      || (!proto && [443, 2029, 8443].includes(device.mgmtPort))
     this._baseUrl = `${useHttps ? 'https' : 'http'}://${device.ip}:${device.mgmtPort || 8081}`
     this._cookie  = null
   }
@@ -123,26 +128,24 @@ export class VsolHttpDriver extends BaseDriver {
     let globalOnline = 0
     let globalTotal  = 0
 
-    await Promise.all(
-      Array.from({ length: ponCount }, async (_, i) => {
-        const ponIdx = i + 1   // select=1..N
-        const onus   = await this._getOnuStatusPage(ponIdx)
+    for (let i = 0; i < ponCount; i++) {
+      const ponIdx = i + 1   // select=1..N
+      const onus   = await this._getOnuStatusPage(ponIdx)
 
-        const total  = onus.length
-        const online = onus.filter(o => o.online).length
-        globalTotal  += total
-        globalOnline += online
+      const total  = onus.length
+      const online = onus.filter(o => o.online).length
+      globalTotal  += total
+      globalOnline += online
 
-        ports.push({
-          id:         `epon0/${ponIdx}`,
-          port:       `0/${ponIdx}`,
-          totalOnu:   total,
-          onlineOnu:  online,
-          offlineOnu: total - online,
-          running:    true,
-        })
+      ports.push({
+        id:         `epon0/${ponIdx}`,
+        port:       `0/${ponIdx}`,
+        totalOnu:   total,
+        onlineOnu:  online,
+        offlineOnu: total - online,
+        running:    true,
       })
-    )
+    }
 
     ports.sort((a, b) => a.port.localeCompare(b.port, undefined, { numeric: true }))
     return { ports, globalOnline, globalTotal }
@@ -208,7 +211,7 @@ export class VsolHttpDriver extends BaseDriver {
     const url  = `${this._baseUrl}${path}`
     const resp = await _fetch(url, {
       headers: { Cookie: this._cookie || '', 'User-Agent': 'infra-manager/1.0' },
-      signal:  AbortSignal.timeout(10000),
+      signal:  AbortSignal.timeout(_requestTimeoutMs),
       redirect: 'manual',
     })
     // Capture Set-Cookie on first request
@@ -228,7 +231,7 @@ export class VsolHttpDriver extends BaseDriver {
         'User-Agent':   'infra-manager/1.0',
       },
       body,
-      signal:   AbortSignal.timeout(10000),
+      signal:   AbortSignal.timeout(_requestTimeoutMs),
       redirect: 'manual',
     })
     const sc = resp.headers.get('set-cookie')
@@ -272,7 +275,7 @@ function _parseTable(html) {
         .replace(/&#37;/g, '%')
         .replace(/&deg;/g, '°')
         .trim()
-      if (text) cells.push(text)
+      cells.push(text)
     }
     if (cells.length > 0) rows.push(cells)
   }
@@ -318,11 +321,10 @@ function _parseOnuStatusTable(html, ponIdx) {
   const onus = []
 
   for (const row of rows) {
-    // Header row has "ONU ID" in first cell
-    if (!row[0] || !row[0].match(/^EPON|^GPON/i)) continue
+    const idRaw = row[0]
+    const m = _parseOnuId(idRaw)
+    if (!m) continue
 
-    // EPON0/1:1  format → normalize to 0/ponIdx:onuId
-    const idRaw   = row[0]   // e.g. "EPON0/1:1"
     const status  = row[1]   ?? ''
     const mac     = row[2]   ?? null
     const desc    = row[3]   ?? null
@@ -332,13 +334,9 @@ function _parseOnuStatusTable(html, ponIdx) {
     const lastDeregRsn = row[8] ?? null   // Last Deregister Reason
     const aliveT       = row[9] ?? null
 
-    // Parse ONU id from "EPON0/1:2" → ponPort=0/1, onuId=2
-    const m = idRaw.match(/\d+\/(\d+):(\d+)/i)
-    if (!m) continue
-
-    const port  = `0/${m[1]}`
-    const onuId = parseInt(m[2])
-    const index = `${port}:${onuId}`
+    const port  = m.port
+    const onuId = m.onuId
+    const index = m.index
     const online = /online/i.test(status)
 
     onus.push({
@@ -368,15 +366,11 @@ function _parseOnuDiagTable(html, ponIdx) {
   const byIdx = {}
 
   for (const row of rows) {
-    if (!row[0] || !row[0].match(/^EPON|^GPON/i)) continue
-
-    const idRaw  = row[0]
-    const m      = idRaw.match(/\d+\/(\d+):(\d+)/i)
+    const idRaw = row[0]
+    const m = _parseOnuId(idRaw)
     if (!m) continue
 
-    const port  = `0/${m[1]}`
-    const onuId = parseInt(m[2])
-    const index = `${port}:${onuId}`
+    const index = m.index
 
     // Columns: ONU ID | MAC | Desc | Distance | Temp | Voltage | TxBias | TxPower | RxPower
     byIdx[index] = {
@@ -392,6 +386,27 @@ function _parseOnuDiagTable(html, ponIdx) {
   }
 
   return byIdx
+}
+
+function _parseOnuId(raw) {
+  const text = String(raw ?? '').trim()
+  if (!text) return null
+
+  const portMatch = text.match(/(\d+)\/(\d+):(\d+)/i)
+  if (portMatch) {
+    const port = `0/${portMatch[2]}`
+    const onuId = parseInt(portMatch[3], 10)
+    return { port, onuId, index: `${port}:${onuId}` }
+  }
+
+  const singleMatch = text.match(/(\d+):(\d+)/i)
+  if (singleMatch) {
+    const port = `0/${singleMatch[1]}`
+    const onuId = parseInt(singleMatch[2], 10)
+    return { port, onuId, index: `${port}:${onuId}` }
+  }
+
+  return null
 }
 
 // ── Utility ────────────────────────────────────────────────────────────────

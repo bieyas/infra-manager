@@ -36,11 +36,12 @@ async function refreshAccessToken() {
 }
 
 export async function apiFetch(path, options = {}) {
+  const { responseType, ...requestOptions } = options
   const { access } = getTokens()
-  const headers = { 'Content-Type': 'application/json', ...(options.headers ?? {}) }
+  const headers = { 'Content-Type': 'application/json', ...(requestOptions.headers ?? {}) }
   if (access) headers['Authorization'] = `Bearer ${access}`
 
-  let res = await fetch(`${BASE}${path}`, { ...options, headers })
+  let res = await fetch(`${BASE}${path}`, { ...requestOptions, headers })
 
   if (res.status === 401 && path !== '/auth/login') {
     if (!isRefreshing) {
@@ -52,7 +53,7 @@ export async function apiFetch(path, options = {}) {
         isRefreshing = false
         // Retry original request with new token
         headers['Authorization'] = `Bearer ${newToken}`
-        res = await fetch(`${BASE}${path}`, { ...options, headers })
+        res = await fetch(`${BASE}${path}`, { ...requestOptions, headers })
       } catch (e) {
         isRefreshing = false
         refreshQueue.forEach(cb => cb(null))
@@ -66,7 +67,7 @@ export async function apiFetch(path, options = {}) {
       const { access: newAccess } = getTokens()
       if (newAccess) {
         headers['Authorization'] = `Bearer ${newAccess}`
-        res = await fetch(`${BASE}${path}`, { ...options, headers })
+        res = await fetch(`${BASE}${path}`, { ...requestOptions, headers })
       }
     }
   }
@@ -83,6 +84,7 @@ export async function apiFetch(path, options = {}) {
   }
 
   if (res.status === 204) return null
+  if (responseType === 'blob') return res.blob()
   return res.json()
 }
 
@@ -91,6 +93,7 @@ export const api = {
   post:   (path, body, opts) => apiFetch(path, { method: 'POST',   body: JSON.stringify(body),  ...opts }),
   patch:  (path, body, opts) => apiFetch(path, { method: 'PATCH',  body: JSON.stringify(body),  ...opts }),
   delete: (path, opts)       => apiFetch(path, { method: 'DELETE', ...opts }),
+  blob:   path              => apiFetch(path, { method: 'GET', responseType: 'blob' }),
 
   auth: {
     login:   (username, password) => apiFetch('/auth/login',   { method: 'POST', body: JSON.stringify({ username, password }) }),

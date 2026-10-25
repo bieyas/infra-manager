@@ -9,7 +9,9 @@ router.use(authenticate)
 // GET /api/dashboard/stats
 router.get('/stats', async (req, res, next) => {
   try {
-    await triggerCustomerSync()
+    void triggerCustomerSync().catch(error => {
+      console.error(`[dashboard] Customer sync failed: ${error.message}`)
+    })
     const [
       deviceGroups,
       alertGroups,

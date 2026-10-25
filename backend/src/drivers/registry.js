@@ -6,6 +6,7 @@ import { GenericSshDriver }     from './GenericSsh.js'
 import { GenericSnmpDriver }    from './GenericSnmp.js'
 import { GenericOltSnmpDriver } from './olt/GenericOltSnmp.js'
 import { VsolHttpDriver }      from './olt/VsolHttp.js'
+import { VsolSshDriver }       from './olt/VsolSsh.js'
 import { decrypt }              from '../lib/crypto.js'
 
 /**
@@ -63,9 +64,24 @@ export function resolveDriverClass(device) {
   const model    = device.model?.toLowerCase()?.trim()        || ''
   const protocol = device.mgmtProtocol?.toUpperCase()?.trim() || ''
 
-  // 0. ZTE + SNMP protocol → always use ZteSnmpDriver (avoids Telnet WALK timeout)
-  if ((vendor === 'zte' || vendor === 'zxan') && type === 'OLT' && protocol === 'SNMP') {
-    return ZteSnmpDriver
+  // Explicit SNMP uses the SNMP-specific OLT driver where one is registered.
+  if (protocol === 'SNMP') {
+    if ((vendor === 'zte' || vendor === 'zxan') && type === 'OLT') {
+      return ZteSnmpDriver
+    }
+    if (type === 'OLT') {
+      const vendorType = `${vendor}:${type}`.toLowerCase()
+      for (const [key, Cls] of BY_VENDOR_TYPE) {
+        if (vendorType.startsWith(key.toLowerCase()) && Cls === GenericOltSnmpDriver) {
+          return Cls
+        }
+      }
+    }
+    return GenericSnmpDriver
+  }
+
+  if (protocol === 'SSH' && type === 'OLT' && vendor.startsWith('vsol')) {
+    return VsolSshDriver
   }
 
   // 1. vendor + type
