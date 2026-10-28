@@ -5,7 +5,6 @@ import Button from '../../components/ui/Button'
 import clsx from 'clsx'
 
 const TYPE_OPTS = [
-  { id: 'odc',     label: 'ODC',     desc: 'Optical Distribution Cabinet' },
   { id: 'odp',     label: 'ODP',     desc: 'Optical Distribution Point'   },
   { id: 'closure', label: 'Closure', desc: 'Splice Closure'               },
   { id: 'htb',     label: 'HTB',     desc: 'Home Terminal Box / ONT'      },
@@ -103,7 +102,7 @@ export default function FtthForm({ mode, type: initType, initialLatlng, node, al
     return {
       id:          '',
       name:        '',
-      type:        initType ?? 'odc',
+      type:        initType ?? 'odp',
       parentId:    '',
       cableCore:   12,
       lat:         initialLatlng?.lat ?? '',
@@ -114,7 +113,7 @@ export default function FtthForm({ mode, type: initType, initialLatlng, node, al
       installDate: '',
       notes:       '',
       status:      'active',
-      // ODC/ODP/Closure specific
+      // ODP/Closure specific
       cores:       [],
       // ODP specific
       capacity:    8,
@@ -196,9 +195,8 @@ export default function FtthForm({ mode, type: initType, initialLatlng, node, al
 
   const parentOpts = allNodes
     .filter(n => n.id !== form.id && (
-      form.type === 'odc'     ? n.type === 'odc' :
-      form.type === 'odp'     ? (n.type === 'odc' || n.type === 'odp') :
-      form.type === 'closure' ? (n.type === 'odc' || n.type === 'odp') :
+      form.type === 'odp'     ? n.type === 'odp' :
+      form.type === 'closure' ? (n.type === 'odp') :
       form.type === 'htb'     ? n.type === 'odp' : false
     ))
     .map(n => ({ value: n.id, label: `${n.id} — ${n.name}` }))
@@ -279,7 +277,7 @@ export default function FtthForm({ mode, type: initType, initialLatlng, node, al
             <>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="ID" required error={errors.id}>
-                  <TextInput value={form.id} onChange={v => set('id', v)} placeholder="ODC-001" mono disabled={isEdit} error={errors.id} />
+                  <TextInput value={form.id} onChange={v => set('id', v)} placeholder="ODP-001" mono disabled={isEdit} error={errors.id} />
                 </Field>
                 <Field label="Status">
                   <SelectInput value={form.status} onChange={v => set('status', v)} options={['active','inactive','maintenance'].map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }))} />
@@ -287,7 +285,7 @@ export default function FtthForm({ mode, type: initType, initialLatlng, node, al
               </div>
 
               <Field label="Nama" required error={errors.name}>
-                <TextInput value={form.name} onChange={v => set('name', v)} placeholder="ODC-001 Pusat" error={errors.name} />
+                <TextInput value={form.name} onChange={v => set('name', v)} placeholder="ODP-001 Pusat" error={errors.name} />
               </Field>
 
               <Field label="Parent">
@@ -339,12 +337,12 @@ export default function FtthForm({ mode, type: initType, initialLatlng, node, al
                   <TextInput value={form.brand} onChange={v => set('brand', v)} placeholder="Huawei, ZTE, Optix…" />
                 </Field>
                 <Field label="Model">
-                  <TextInput value={form.model} onChange={v => set('model', v)} placeholder="ODC-96C" />
+                  <TextInput value={form.model} onChange={v => set('model', v)} placeholder="ODP-16C" />
                 </Field>
               </div>
 
               {/* Type-specific fields */}
-              {(form.type === 'odc' || form.type === 'odp' || form.type === 'closure') && (
+              {(form.type === 'odp' || form.type === 'closure') && (
                 <Field label="Jumlah Core Kabel">
                   <div className="flex flex-wrap gap-1.5">
                     {CORE_OPTS.map(c => (

@@ -6,7 +6,7 @@ import LocationPickerModal from '../../components/ui/LocationPickerModal'
 import ConfirmModal from '../../components/ui/ConfirmModal'
 import PhotoUpload from './PhotoUpload'
 import SplitterManager from './SplitterManager'
-import { SPLITTER_OPTIONS, MOUNT_OPTIONS, useOdcList, useOdcDetail, useOdpList, useOdpDetail, createOdp, updateOdp, deleteOdpWithProtection, checkOdpCustomers } from './useDistribution'
+import { SPLITTER_OPTIONS, MOUNT_OPTIONS, useOdpList, useOdpDetail, createOdp, updateOdp, deleteOdpWithProtection, checkOdpCustomers } from './useDistribution'
 import { useDevices } from '../devices/useDevices'
 import { useToast } from '../../context/ToastContext'
 import { useAppSettings } from '../../hooks/useAppSettings'
@@ -53,175 +53,165 @@ function Section({ title, children }) {
   )
 }
 
-function Field({ label, hint, children, required }) {
+function Field({ label, required, hint, children }) {
   return (
-    <div>
-      <label className="block text-xs font-medium text-secondary mb-1.5">
-        {label}{required && <span className="text-rose-400 ml-0.5">*</span>}
+    <div className="space-y-1">
+      <label className="text-xs font-medium text-secondary">
+        {label} {required && <span className="text-rose-400">*</span>}
       </label>
       {children}
-      {hint && <p className="text-[10px] text-muted mt-1">{hint}</p>}
+      {hint && <p className="text-[11px] text-muted">{hint}</p>}
     </div>
   )
 }
 
-// Custom color select with colored dots in options
 function ColorSelect({ value, onChange, colors, placeholder }) {
-  const [isOpen, setIsOpen] = useState(false)
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
   const selectedColor = colors.find(c => c.value === value)
-  
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   return (
-    <div className="relative">
+    <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className={IC + ' flex items-center justify-between text-left'}
+        onClick={() => setOpen(!open)}
+        className={`${IC} flex items-center justify-between text-left`}
       >
-        <div className="flex items-center gap-2">
-          {selectedColor && (
-            <div 
-              className="w-4 h-4 rounded-full border border-gray-300 flex-shrink-0"
-              style={{ backgroundColor: selectedColor.color }}
-            />
+        <span className="flex items-center gap-2">
+          {selectedColor ? (
+            <>
+              <span 
+                className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0" 
+                style={{ backgroundColor: selectedColor.color }} 
+              />
+              <span className="text-primary">{selectedColor.label}</span>
+            </>
+          ) : (
+            <span className="text-muted">{placeholder}</span>
           )}
-          <span className={selectedColor ? '' : 'text-muted'}>
-            {selectedColor ? selectedColor.label : placeholder}
-          </span>
-        </div>
-        <svg className="w-4 h-4 text-muted flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        </span>
+        <ChevronDown size={14} className="text-muted" />
       </button>
-      
-      {isOpen && (
-        <div className="absolute z-10 w-full mt-1 bg-[var(--bg-card)] border border-[var(--border)] rounded-lg shadow-lg max-h-60 overflow-auto">
-          <div className="p-1">
+
+      {open && (
+        <div className="absolute z-20 w-full mt-1 bg-[var(--bg-card)] border border-[var(--border)] rounded-lg shadow-lg overflow-hidden max-h-60 overflow-y-auto">
+          {colors.map(c => (
             <button
+              key={c.value}
               type="button"
-              onClick={() => { onChange(''); setIsOpen(false); }}
-              className="w-full px-3 py-2 text-left text-sm text-muted hover:bg-[var(--bg-secondary)] rounded"
+              onClick={() => {
+                onChange(c.value)
+                setOpen(false)
+              }}
+              className="w-full px-3 py-2 text-sm flex items-center justify-between hover:bg-[var(--accent-glow)]/20 transition-colors text-left"
             >
-              {placeholder}
-            </button>
-            {colors.map(color => (
-              <button
-                key={color.value}
-                type="button"
-                onClick={() => { onChange(color.value); setIsOpen(false); }}
-                className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--bg-secondary)] rounded flex items-center gap-2"
-              >
-                <div 
-                  className="w-4 h-4 rounded-full border border-gray-300 flex-shrink-0"
-                  style={{ backgroundColor: color.color }}
+              <span className="flex items-center gap-2">
+                <span 
+                  className="w-3.5 h-3.5 rounded-full border border-white/20 shrink-0" 
+                  style={{ backgroundColor: c.color }} 
                 />
-                {color.label}
-              </button>
-            ))}
-          </div>
+                <span className="text-primary">{c.label}</span>
+              </span>
+              {value === c.value && <Check size={14} className="text-[var(--accent)]" />}
+            </button>
+          ))}
         </div>
-      )}
-      
-      {/* Close dropdown when clicking outside */}
-      {isOpen && (
-        <div 
-          className="fixed inset-0 z-0" 
-          onClick={() => setIsOpen(false)}
-        />
       )}
     </div>
   )
-}
-
-// Power badge color: orange > -20, green -20 to -23, red < -23
-function powerColor(dbm) {
-  if (dbm == null) return null
-  if (dbm > -20) return { bg: 'bg-amber-500/15', text: 'text-amber-400', border: 'border-amber-500/30' }
-  if (dbm >= -23) return { bg: 'bg-emerald-500/15', text: 'text-emerald-400', border: 'border-emerald-500/30' }
-  return { bg: 'bg-rose-500/15', text: 'text-rose-400', border: 'border-rose-500/30' }
 }
 
 function PortDropdown({ ports, value, onChange, disabled, placeholder, isEdit }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
-  useEffect(() => {
-    if (!open) return
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
+  const selectedPort = ports.find(p => p.number.toString() === value?.toString())
 
-  const selected = ports.find(p => p.id === value)
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   return (
     <div ref={ref} className="relative">
       <button
         type="button"
-        onClick={() => !disabled && setOpen(!open)}
         disabled={disabled}
-        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-card)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)] flex items-center justify-between gap-2 text-left disabled:opacity-50 disabled:cursor-not-allowed"
+        onClick={() => setOpen(!open)}
+        className={`${IC} flex items-center justify-between text-left ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
-        {selected ? (
-          <span className="flex items-center gap-2 flex-wrap min-w-0">
-            <span className="text-primary truncate">{selected.label}</span>
-            {selected.power != null && (() => {
-              const c = powerColor(selected.power)
-              return c ? (
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${c.bg} ${c.text} ${c.border}`}>
-                  {selected.power.toFixed(1)} dBm
+        <span className="flex items-center gap-2">
+          {selectedPort ? (
+            <>
+              <span className={`w-2 h-2 rounded-full shrink-0 ${selectedPort.connected ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+              <span className="text-primary">Port {selectedPort.number}</span>
+              {selectedPort.power !== null && selectedPort.power !== undefined && (
+                <span className="text-xs text-muted">({selectedPort.power} dBm)</span>
+              )}
+              {selectedPort.connected && (
+                <span className="text-xs text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">
+                  Terpakai {selectedPort.connectedTo ? `(${selectedPort.connectedTo})` : ''}
                 </span>
-              ) : null
-            })()}
-            {selected.connectedName && (
-              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-sky-500/15 text-sky-400 border-sky-500/30">
-                {selected.connectedName}
-              </span>
-            )}
-          </span>
-        ) : (
-          <span className="text-muted">{placeholder}</span>
-        )}
-        <ChevronDown size={14} className={`text-muted shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+              )}
+            </>
+          ) : (
+            <span className="text-muted">{placeholder}</span>
+          )}
+        </span>
+        <ChevronDown size={14} className="text-muted" />
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)] shadow-xl">
-          {ports.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-muted">{placeholder}</div>
-          ) : (
-            ports.map(p => {
-              const isSelected = p.id === value
-              const isDisabled = p.connected && !isEdit && p.id !== value
-              const pc = powerColor(p.power)
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  disabled={isDisabled}
-                  onClick={() => { onChange(p.id); setOpen(false) }}
-                  className={`w-full px-3 py-2 flex items-center gap-2 text-left text-sm transition-colors
-                    ${isSelected ? 'bg-[var(--accent-glow)] text-[var(--accent)]' : 'text-primary hover:bg-[var(--bg-secondary)]'}
-                    ${isDisabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}
-                  `}
-                >
-                  <span className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
-                    <span className="truncate">{p.label}</span>
-                    {pc && p.power != null && (
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${pc.bg} ${pc.text} ${pc.border}`}>
-                        {p.power.toFixed(1)} dBm
-                      </span>
-                    )}
-                    {p.connectedName && (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-sky-500/15 text-sky-400 border-sky-500/30">
-                        {p.connectedName}
-                      </span>
-                    )}
-                  </span>
-                  {isSelected && <Check size={14} className="text-[var(--accent)] shrink-0" />}
-                </button>
-              )
-            })
-          )}
+        <div className="absolute z-20 w-full mt-1 bg-[var(--bg-card)] border border-[var(--border)] rounded-lg shadow-lg overflow-hidden max-h-60 overflow-y-auto">
+          {ports.map(p => {
+            const isCurrentSelected = p.number.toString() === value?.toString()
+            const canSelect = !p.connected || isCurrentSelected || isEdit
+
+            return (
+              <button
+                key={p.number}
+                type="button"
+                disabled={!canSelect}
+                onClick={() => {
+                  onChange(p.number.toString())
+                  setOpen(false)
+                }}
+                className={`w-full px-3 py-2 text-sm flex items-center justify-between hover:bg-[var(--accent-glow)]/20 transition-colors text-left ${
+                  !canSelect ? 'opacity-40 cursor-not-allowed bg-muted/20' : ''
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${p.connected ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+                  <span className="text-primary">Port {p.number}</span>
+                  {p.power !== null && p.power !== undefined && (
+                    <span className="text-xs text-muted">({p.power} dBm)</span>
+                  )}
+                  {p.connected && (
+                    <span className="text-xs text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">
+                      {p.connectedTo ? `Terpakai (${p.connectedTo})` : 'Terpakai'}
+                    </span>
+                  )}
+                </div>
+                {isCurrentSelected && <Check size={14} className="text-[var(--accent)]" />}
+              </button>
+            )
+          })}
         </div>
       )}
     </div>
@@ -230,14 +220,12 @@ function PortDropdown({ ports, value, onChange, disabled, placeholder, isEdit })
 
 const getEmptyState = (settings) => ({
   name: '', address: '', lat: '', lng: '',
-  uplinkType: 'odc', // 'odc' | 'odp'
-  odcId: '', oltId: '', ponPort: '',
+  uplinkType: 'olt', // 'olt' | 'odp'
+  oltId: '', ponPort: '',
   uplinkOdpId: '', uplinkPort: '',
   feederLabel: '', feederCores: '', feederCore: '', feederPass: '',
-  // NEW: Multi-splitter system
   splitters: [],
   inputPower: '', fiberLength: '',
-  // Legacy fields
   splitterRatio: settings?.defaultOdpSplitter ?? 'R1_8',
   mountType: settings?.defaultMountType ?? '',
   brand: '', status: 'ACTIVE',
@@ -253,7 +241,6 @@ export default function OdpFormPage() {
 
   const { devices } = useDevices()
   const olts = useMemo(() => devices.filter(d => d.type === 'olt' || d.type === 'OLT'), [devices])
-  const { odcs } = useOdcList({})
   const { odps: allOdps } = useOdpList({})
   const { odp, loading: loadingOdp } = useOdpDetail(isEdit ? id : null)
 
@@ -262,14 +249,11 @@ export default function OdpFormPage() {
   const [error,   setError]   = useState('')
   const [mapOpen, setMapOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [confirmMode, setConfirmMode] = useState('save') // 'save' | 'delete'
+  const [confirmMode, setConfirmMode] = useState('save')
   const [pendingPayload, setPendingPayload] = useState(null)
   const [connectedCustomers, setConnectedCustomers] = useState([])
 
-  // Fetch ODC detail untuk mendapatkan ports
-  const { odc: selectedOdcDetail } = useOdcDetail(form.uplinkType === 'odc' ? form.odcId : null)
-  
-  // Fetch ODP detail untuk mendapatkan ports
+  // Fetch upstream ODP detail untuk port cascade
   const [selectedOdpDetail, setSelectedOdpDetail] = useState(null)
   useEffect(() => {
     if (form.uplinkType === 'odp' && form.uplinkOdpId) {
@@ -279,84 +263,71 @@ export default function OdpFormPage() {
     }
   }, [form.uplinkType, form.uplinkOdpId])
   
-  // Dapatkan available ports dari upstream
+  // Dapatkan available ports dari upstream ODP
   const upstreamPorts = useMemo(() => {
-    const buildPorts = (detail) => {
-      if (!detail?.splitters) return []
-      const ports = []
-      detail.splitters.forEach(splitter => {
-        (splitter.ports || []).forEach(port => {
-          if (port.connectionStatus === 'AVAILABLE' || port.connectionStatus === 'CONNECTED') {
-            let connectedName = null
-            if (port.connectionStatus === 'CONNECTED') {
-              if (port.connectedToType === 'ODP') {
-                // Try to resolve name from allOdps
-                const linked = allOdps.find(o => o.id === port.connectedToId)
-                connectedName = linked?.name || 'ODP'
-              } else if (port.connectedToType === 'ODC') {
-                connectedName = 'ODC'
-              } else if (port.connectedToType === 'CUSTOMER') {
-                connectedName = 'Customer'
-              }
+    if (form.uplinkType !== 'odp' || !selectedOdpDetail?.splitters) return []
+    const ports = []
+    selectedOdpDetail.splitters.forEach(splitter => {
+      (splitter.ports || []).forEach(port => {
+        if (port.connectionStatus === 'AVAILABLE' || port.connectionStatus === 'CONNECTED') {
+          let connectedName = null
+          if (port.connectionStatus === 'CONNECTED') {
+            if (port.connectedToType === 'ODP') {
+              const linked = allOdps.find(o => o.id === port.connectedToId)
+              connectedName = linked?.name || 'ODP'
+            } else if (port.connectedToType === 'CUSTOMER') {
+              connectedName = 'Customer'
             }
-            ports.push({
-              id: `${splitter.id}-${port.portNumber}`,
-              splitterId: splitter.id,
-              portNumber: port.portNumber,
-              label: `${splitter.position || 'Splitter'} - Port ${port.portNumber}`,
-              power: port.outputPower ?? splitter.inputPower ?? detail.inputPower,
-              connected: port.connectionStatus === 'CONNECTED',
-              connectedName,
-            })
           }
-        })
+          ports.push({
+            number: port.portNumber,
+            power: port.outputPower,
+            connected: port.connectionStatus === 'CONNECTED',
+            connectedTo: connectedName,
+          })
+        }
       })
-      return ports
-    }
-
-    if (form.uplinkType === 'odc') return buildPorts(selectedOdcDetail)
-    if (form.uplinkType === 'odp') return buildPorts(selectedOdpDetail)
-    return []
-  }, [form.uplinkType, selectedOdcDetail, selectedOdpDetail, allOdps])
+    })
+    return ports
+  }, [form.uplinkType, selectedOdpDetail, allOdps])
   
   // Kalkulasi power input berdasarkan port yang dipilih dan panjang kabel
   useEffect(() => {
     if (!form.uplinkPort || !form.fiberLength) return
     
-    const port = upstreamPorts.find(p => p.id === form.uplinkPort)
-    if (!port || port.power === null || port.power === undefined) return
+    let sourcePower = null
+    if (form.uplinkType === 'odp') {
+      const port = upstreamPorts.find(p => p.number.toString() === form.uplinkPort?.toString())
+      sourcePower = port?.power
+    }
     
-    // Loss per km: 0.35 dB/km di 1490nm
-    const lossPerKm = 0.35
-    const lengthKm = Number(form.fiberLength) / 1000
-    const calculatedPower = port.power - (lossPerKm * lengthKm)
-    
-    setForm(f => ({ ...f, inputPower: calculatedPower.toFixed(2) }))
-  }, [form.uplinkPort, form.fiberLength, upstreamPorts])
+    if (sourcePower !== null && sourcePower !== undefined) {
+      const distanceKm = Number(form.fiberLength) / 1000
+      const fiberLoss = distanceKm * 0.35 // 0.35 dB/km
+      const connectorLoss = 0.5 // 0.5 dB connector
+      const calculatedInputPower = Number(sourcePower) - fiberLoss - connectorLoss
+      set('inputPower', calculatedInputPower.toFixed(2))
+    }
+  }, [form.uplinkPort, form.fiberLength, form.uplinkType, upstreamPorts])
 
-  // Reset form dengan default baru jika settings berubah (tambah mode)
+  // Sync settings when available
   useEffect(() => {
-    if (!isEdit) {
-      setForm(f => ({ 
-        ...f, 
-        splitterRatio: settings?.defaultOdpSplitter ?? 'R1_8', 
-        mountType: settings?.defaultMountType ?? '',
-        splitters: [],
-        inputPower: '',
+    if (!isEdit && settings) {
+      setForm(f => ({
+        ...f,
+        splitterRatio: settings.defaultOdpSplitter ?? f.splitterRatio,
+        mountType: settings.defaultMountType ?? f.mountType,
         fiberLength: '',
       }))
     }
   }, [settings.defaultOdpSplitter, settings.defaultMountType, isEdit])
 
-  // Derive PON list from ODC's parent OLT ponCount (or selected OLT)
   const selectedOlt = useMemo(() => {
-    const oltId = form.oltId || odcs.find(o => o.id === form.odcId)?.oltId
-    return olts.find(o => o.id === oltId) ?? null
-  }, [olts, odcs, form.oltId, form.odcId])
+    return olts.find(o => o.id === form.oltId) ?? null
+  }, [olts, form.oltId])
 
   const ponList = useMemo(() => getPonList(selectedOlt), [selectedOlt])
   const existingNames = useMemo(() => allOdps.filter(o => o.id !== id).map(o => o.name), [allOdps, id])
-  const selectedOdc = useMemo(() => odcs.find(o => o.id === form.odcId) ?? null, [odcs, form.odcId])
 
   // Hitung estimasi jarak antara uplink dan ODP
   const estimatedDistance = useMemo(() => {
@@ -365,9 +336,9 @@ export default function OdpFormPage() {
     let upstreamLat = null
     let upstreamLng = null
     
-    if (form.uplinkType === 'odc' && selectedOdc) {
-      upstreamLat = selectedOdc.lat
-      upstreamLng = selectedOdc.lng
+    if (form.uplinkType === 'olt' && selectedOlt) {
+      upstreamLat = selectedOlt.lat
+      upstreamLng = selectedOlt.lng
     } else if (form.uplinkType === 'odp' && selectedOdpDetail) {
       upstreamLat = selectedOdpDetail.lat
       upstreamLng = selectedOdpDetail.lng
@@ -380,9 +351,8 @@ export default function OdpFormPage() {
       Number(form.lat), Number(form.lng)
     )
     
-    // Tambahkan 10% overhead untuk routing jalur kabel
     return Math.round(distance * 1.1)
-  }, [form.lat, form.lng, form.uplinkType, selectedOdc, selectedOdpDetail])
+  }, [form.lat, form.lng, form.uplinkType, selectedOlt, selectedOdpDetail])
 
   const [fiberLengthManual, setFiberLengthManual] = useState(false)
 
@@ -412,8 +382,7 @@ export default function OdpFormPage() {
         address: odp.address ?? '',
         lat: odp.lat ?? '',
         lng: odp.lng ?? '',
-        uplinkType: odp.uplinkType ?? 'odc',
-        odcId: odp.odcId ?? '',
+        uplinkType: odp.uplinkType === 'odp' ? 'odp' : 'olt',
         oltId: odp.oltId ?? '',
         ponPort: odp.ponPort ?? '',
         uplinkOdpId: odp.uplinkOdpId ?? '',
@@ -425,7 +394,6 @@ export default function OdpFormPage() {
         splitters: odp.splitters ?? [],
         inputPower: odp.inputPower ?? '',
         fiberLength: odp.fiberLength ?? '',
-        // Legacy fields
         splitterRatio: odp.splitterRatio ?? settings?.defaultOdpSplitter ?? 'R1_8',
         mountType: odp.mountType ?? settings?.defaultMountType ?? '',
         brand: odp.brand ?? '',
@@ -438,26 +406,14 @@ export default function OdpFormPage() {
     }
   }, [isEdit, odp, settings])
 
-  // Auto-fill OLT/PON from selected ODC
-  const handleOdcChange = (odcId) => {
-    const selectedOdc = odcs.find(o => o.id === odcId)
-    setForm(f => ({
-      ...f,
-      odcId,
-      oltId: selectedOdc?.oltId ?? f.oltId,
-      ponPort: selectedOdc?.ponPort ?? f.ponPort,
-      uplinkPort: '',
-    }))
-  }
-  
-  // Handler untuk ODP uplink change
+  // Handler untuk ODP uplink change (cascade)
   const handleUplinkOdpChange = (odpId) => {
-    const selectedOdp = allOdps.find(o => o.id === odpId)
+    const parentOdp = allOdps.find(o => o.id === odpId)
     setForm(f => ({
       ...f,
       uplinkOdpId: odpId,
-      oltId: selectedOdp?.oltId ?? f.oltId,
-      ponPort: selectedOdp?.ponPort ?? f.ponPort,
+      oltId: parentOdp?.oltId ?? f.oltId,
+      ponPort: parentOdp?.ponPort ?? f.ponPort,
       uplinkPort: '',
     }))
   }
@@ -467,11 +423,10 @@ export default function OdpFormPage() {
     setForm(f => ({
       ...f,
       uplinkType: type,
-      odcId: type === 'odc' ? f.odcId : '',
       uplinkOdpId: type === 'odp' ? f.uplinkOdpId : '',
       uplinkPort: '',
-      oltId: '',
-      ponPort: '',
+      oltId: type === 'olt' ? f.oltId : '',
+      ponPort: type === 'olt' ? f.ponPort : '',
     }))
   }
 
@@ -503,7 +458,7 @@ export default function OdpFormPage() {
     ...form,
     lat: form.lat ? Number(form.lat) : null,
     lng: form.lng ? Number(form.lng) : null,
-    odcId: form.uplinkType === 'odc' ? (form.odcId || null) : null,
+    uplinkType: form.uplinkType,
     uplinkOdpId: form.uplinkType === 'odp' ? (form.uplinkOdpId || null) : null,
     oltId: form.oltId || null,
     ponPort: form.ponPort || null,
@@ -519,16 +474,14 @@ export default function OdpFormPage() {
 
     // Basic validation
     if (!form.name?.trim()) { setError('Nama ODP wajib diisi'); return }
-    if (!form.odcId && form.uplinkType === 'odc') { setError('ODC wajib dipilih'); return }
-    if (!form.uplinkOdpId && form.uplinkType === 'odp') { setError('ODP upstream wajib dipilih'); return }
+    if (form.uplinkType === 'olt' && !form.oltId) { setError('OLT sumber wajib dipilih'); return }
+    if (form.uplinkType === 'odp' && !form.uplinkOdpId) { setError('ODP upstream wajib dipilih'); return }
 
     if (isEdit) {
-      // Edit: tampilkan confirm modal
       setPendingPayload(buildPayload())
       setConfirmMode('save')
       setConfirmOpen(true)
     } else {
-      // Tambah baru: langsung simpan tanpa confirm
       handleSave(buildPayload())
     }
   }
@@ -559,8 +512,13 @@ export default function OdpFormPage() {
 
   // Auto-suggest name
   const handleSuggestName = () => {
-    const odcName = odcs.find(o => o.id === form.odcId)?.name
-    const suggested = suggestOdpName({ odcName, existingNames })
+    const parentOdpName = allOdps.find(o => o.id === form.uplinkOdpId)?.name
+    const suggested = suggestOdpName({
+      oltName: selectedOlt?.name,
+      ponPort: form.ponPort,
+      uplinkOdpName: parentOdpName,
+      existingNames,
+    })
     if (suggested) set('name', suggested)
   }
 
@@ -618,16 +576,16 @@ export default function OdpFormPage() {
         {/* Identitas */}
         <Section title="Identitas">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="Nama ODP" required hint="Unik per ODC">
+            <Field label="Nama ODP" required hint="Contoh: ODP-OLT01-P1-01 atau ODP-PUSAT-A">
               <div className="flex gap-2">
                 <input
                   required
                   value={form.name}
                   onChange={e => set('name', e.target.value)}
-                  placeholder={form.odcId ? `ODP-${selectedOdc?.name?.replace('ODC-', '') || 'XXX'}-XX` : 'ODP-XXX-XX'}
+                  placeholder="ODP-XXX-01"
                   className={IC + ' flex-1'}
                 />
-                <Button type="button" variant="outline" size="sm" onClick={handleSuggestName} disabled={!form.odcId}>
+                <Button type="button" variant="outline" size="sm" onClick={handleSuggestName} disabled={!form.oltId && !form.uplinkOdpId}>
                   <Wand2 size={14} />
                 </Button>
               </div>
@@ -651,73 +609,55 @@ export default function OdpFormPage() {
 
         {/* Upstream */}
         <Section title="Upstream">
-          {/* Uplink Type Selection */}
           <div className="flex gap-2 mb-4">
             <button
               type="button"
-              onClick={() => handleUplinkTypeChange('odc')}
-              className={`flex-1 py-2 px-4 text-sm rounded-lg border transition-colors ${
-                form.uplinkType === 'odc'
+              onClick={() => handleUplinkTypeChange('olt')}
+              className={`flex-1 py-2 px-4 text-sm font-medium rounded-lg border transition-colors ${
+                form.uplinkType === 'olt'
                   ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
                   : 'bg-[var(--bg-secondary)] text-muted border-[var(--border)] hover:border-[var(--accent)]'
               }`}
             >
-              Dari ODC
+              Langsung dari OLT (PON)
             </button>
             <button
               type="button"
               onClick={() => handleUplinkTypeChange('odp')}
-              className={`flex-1 py-2 px-4 text-sm rounded-lg border transition-colors ${
+              className={`flex-1 py-2 px-4 text-sm font-medium rounded-lg border transition-colors ${
                 form.uplinkType === 'odp'
                   ? 'bg-[var(--accent)] text-white border-[var(--accent)]'
                   : 'bg-[var(--bg-secondary)] text-muted border-[var(--border)] hover:border-[var(--accent)]'
               }`}
             >
-              Dari ODP Lain
+              Dari ODP Lain (Cascade)
             </button>
           </div>
           
           <div className="space-y-4">
-            {/* Row 1: ODC/ODP Selection + Port */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* ODC Selection */}
-              {form.uplinkType === 'odc' && (
-                <>
-                  <Field label="ODC Sumber" required hint="Pilih ODC untuk melihat port yang tersedia">
-                    <select value={form.odcId} onChange={e => handleOdcChange(e.target.value)} className={IC}>
-                      <option value="">— Pilih ODC —</option>
-                      {odcs.map(o => (
-                        <option key={o.id} value={o.id}>
-                          {(() => {
-                      const cap  = o.totalOutputs ?? o.capacity ?? 0
-                      const used = o.usedOutputs ?? o.usedPorts ?? 0
-                      const avail = cap - used
-                      if (cap === 0) return o.name
-                      return `${o.name} (${avail} tersedia / ${cap} port)`
-                    })()}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Port dari ODC" hint={upstreamPorts.length > 0 ? `${upstreamPorts.filter(p => !p.connected).length} port tersedia, ${upstreamPorts.filter(p => p.connected).length} terpakai` : ''}>
-                    <PortDropdown
-                      ports={upstreamPorts}
-                      value={form.uplinkPort}
-                      onChange={(val) => set('uplinkPort', val)}
-                      disabled={!upstreamPorts.length}
-                      placeholder={!upstreamPorts.length 
-                        ? (form.odcId ? 'Memuat ports...' : 'Pilih ODC dulu')
-                        : '— Pilih Port —'}
-                      isEdit={isEdit}
-                    />
-                  </Field>
-                </>
-              )}
-              
-              {/* ODP Selection */}
-              {form.uplinkType === 'odp' && (
-                <>
-                  <Field label="ODP Sumber" required hint="Pilih ODP upstream untuk melihat port yang tersedia">
+            {form.uplinkType === 'olt' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="OLT Sumber" required hint="Pilih OLT penyedia feed">
+                  <select value={form.oltId} onChange={e => set('oltId', e.target.value)} className={IC}>
+                    <option value="">— Pilih OLT —</option>
+                    {olts.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="PON Port" hint="Port PON pada OLT">
+                  <select value={form.ponPort} onChange={e => set('ponPort', e.target.value)} className={IC} disabled={!form.oltId}>
+                    <option value="">— Pilih PON —</option>
+                    {ponList.map(p => (
+                      <option key={p.value} value={p.value}>{p.label}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            )}
+            
+            {form.uplinkType === 'odp' && (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Field label="ODP Sumber (Parent)" required hint="Pilih ODP upstream untuk cascading">
                     <select value={form.uplinkOdpId} onChange={e => handleUplinkOdpChange(e.target.value)} className={IC}>
                       <option value="">— Pilih ODP —</option>
                       {allOdps.filter(o => o.id !== odp?.id).map(o => (
@@ -727,7 +667,7 @@ export default function OdpFormPage() {
                       ))}
                     </select>
                   </Field>
-                  <Field label="Port dari ODP" hint={upstreamPorts.length > 0 ? `${upstreamPorts.filter(p => !p.connected).length} port tersedia, ${upstreamPorts.filter(p => p.connected).length} terpakai` : ''}>
+                  <Field label="Port dari ODP Sumber" hint={upstreamPorts.length > 0 ? `${upstreamPorts.filter(p => !p.connected).length} port tersedia, ${upstreamPorts.filter(p => p.connected).length} terpakai` : ''}>
                     <PortDropdown
                       ports={upstreamPorts}
                       value={form.uplinkPort}
@@ -739,56 +679,38 @@ export default function OdpFormPage() {
                       isEdit={isEdit}
                     />
                   </Field>
-                </>
-              )}
-            </div>
-            
-            {/* Row 2: OLT Info */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Field label="OLT" hint="Auto-fill dari ODC/ODP upstream">
-                {(form.odcId || form.uplinkOdpId) ? (
-                  <input 
-                    type="text" 
-                    value={selectedOlt?.name || ''} 
-                    readOnly 
-                    className={IC + ' bg-muted cursor-not-allowed'}
-                    placeholder="OLT akan terisi otomatis"
-                  />
-                ) : (
-                  <select value={form.oltId} onChange={e => set('oltId', e.target.value)} className={IC}>
-                    <option value="">— Pilih OLT —</option>
-                    {olts.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                  </select>
-                )}
-              </Field>
-              <Field label="PON Port" hint="Auto-fill dari ODC/ODP upstream">
-                {(form.odcId || form.uplinkOdpId) ? (
-                  <input 
-                    type="text" 
-                    value={form.ponPort || ''} 
-                    readOnly 
-                    className={IC + ' bg-muted cursor-not-allowed'}
-                    placeholder="PON Port akan terisi otomatis"
-                  />
-                ) : (
-                  <select value={form.ponPort} onChange={e => set('ponPort', e.target.value)} className={IC}>
-                    <option value="">— Pilih PON —</option>
-                    {ponList.map(p => (
-                      <option key={p.value} value={p.value}>{p.label}</option>
-                    ))}
-                  </select>
-                )}
-              </Field>
-            </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Field label="OLT (Turunan)" hint="Otomatis mengikuti ODP upstream">
+                    <input 
+                      type="text" 
+                      value={selectedOlt?.name || ''} 
+                      readOnly 
+                      className={IC + ' bg-muted cursor-not-allowed'}
+                      placeholder="OLT akan terisi otomatis"
+                    />
+                  </Field>
+                  <Field label="PON Port (Turunan)" hint="Otomatis mengikuti ODP upstream">
+                    <input 
+                      type="text" 
+                      value={form.ponPort || ''} 
+                      readOnly 
+                      className={IC + ' bg-muted cursor-not-allowed'}
+                      placeholder="PON Port akan terisi otomatis"
+                    />
+                  </Field>
+                </div>
+              </>
+            )}
           </div>
         </Section>
 
-        {/* Kabel Feeder */}
-        <Section title="Kabel Feeder (Masuk dari Upstream)">
+        {/* Kabel Feeder / Distribusi */}
+        <Section title="Kabel Feeder / Distribusi (Masuk dari Upstream)">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label="Label Kabel">
               <input value={form.feederLabel} onChange={e => set('feederLabel', e.target.value)}
-                placeholder="FO-ODC01-ODP-A" className={IC} />
+                placeholder="FO-OLT-ODP-01" className={IC} />
             </Field>
             <Field label="Total Core">
               <select value={form.feederCores} onChange={e => set('feederCores', e.target.value)} className={IC}>

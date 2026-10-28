@@ -432,7 +432,6 @@ export default function CustomerDetail({ customerId, onClose }) {
               {/* Koneksi FTTH */}
               {c.odp && (
                 <Section title="Koneksi FTTH" icon={Network}>
-                  {c.odp.odc && <Row label="ODC"    value={c.odp.odc.name} />}
                   <Row label="ODP"        value={c.odp.name} />
                   <Row label="Port ODP"   value={c.odpPort} />
                   {c.splitterPort && (

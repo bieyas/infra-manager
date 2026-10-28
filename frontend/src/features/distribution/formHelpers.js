@@ -25,58 +25,39 @@ export function getPonList(olt) {
 }
 
 /**
- * Generate suggested ODC name from OLT, PON, location abbreviation, and sequence.
- * Format: ODC-{OLT_ABBR}-{PON}-{LOC_ABBR}-{SEQ}
- * Example: ODC-ZTE01-P3-RNGKT-01
+ * Generate suggested ODP name from OLT, PON, or uplink ODP.
+ * Format:
+ * Direct from OLT: ODP-{OLT_ABBR}-{PON}-{SEQ}
+ * Cascaded from ODP: ODP-{BASE}-{SUFFIX}
  */
-export function suggestOdcName({ oltName, ponPort, address, existingNames = [] }) {
+export function suggestOdpName({ oltName, ponPort, uplinkOdpName, existingNames = [] }) {
+  if (uplinkOdpName) {
+    const base = uplinkOdpName.replace(/^ODP-/, '')
+    const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    let round = 1
+    while (true) {
+      for (const letter of letters) {
+        const suffix = round === 1 ? letter : `${letter}${round}`
+        const candidate = `ODP-${base}-${suffix}`
+        if (!existingNames.includes(candidate)) return candidate
+      }
+      round++
+    }
+  }
+
   const oltAbbr = oltName
     ? oltName.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 6)
     : 'OLT'
 
   const ponAbbr = ponPort
-    ? `P${ponPort.replace(/[^0-9]/g, '').slice(-1) || '1'}`
+    ? `P${ponPort.replace(/[^0-9]/g, '') || '1'}`
     : 'P1'
 
-  const locAbbr = address
-    ? address
-        .split(/[\s,./]+/)
-        .filter(w => w.length > 2)
-        .slice(0, 2)
-        .map(w => w.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 4))
-        .join('')
-        .slice(0, 6) || 'LOC'
-    : 'LOC'
-
-  // Find next sequence number not already in use
   let seq = 1
   while (true) {
-    const candidate = `ODC-${oltAbbr}-${ponAbbr}-${locAbbr}-${String(seq).padStart(2, '0')}`
+    const candidate = `ODP-${oltAbbr}-${ponAbbr}-${String(seq).padStart(2, '0')}`
     if (!existingNames.includes(candidate)) return candidate
     seq++
-  }
-}
-
-/**
- * Generate suggested ODP name from ODC name and sequence letter/number.
- * Format: ODP-{ODC_SUFFIX}-{SEQ}
- * Example: ODC-ZTE01-P3-RNGKT-01 → ODP-ZTE01-P3-RNGKT-01-A
- */
-export function suggestOdpName({ odcName, existingNames = [] }) {
-  const base = odcName
-    ? odcName.replace(/^ODC-/, '')
-    : 'DIST'
-
-  // Try A, B, C … Z, then A2, B2 …
-  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-  let round = 1
-  while (true) {
-    for (const letter of letters) {
-      const suffix = round === 1 ? letter : `${letter}${round}`
-      const candidate = `ODP-${base}-${suffix}`
-      if (!existingNames.includes(candidate)) return candidate
-    }
-    round++
   }
 }
 

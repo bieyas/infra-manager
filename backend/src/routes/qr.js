@@ -11,11 +11,6 @@ router.get('/:type/:id', async (req, res) => {
 
   try {
     switch (type) {
-      case 'odc': {
-        const odc = await prisma.odc.findUnique({ where: { id }, select: { id: true } })
-        if (!odc) return res.status(404).json({ error: 'ODC tidak ditemukan' })
-        return res.redirect(`${FRONTEND}/odc?detail=${id}`)
-      }
       case 'odp': {
         const odp = await prisma.odp.findUnique({ where: { id }, select: { id: true } })
         if (!odp) return res.status(404).json({ error: 'ODP tidak ditemukan' })

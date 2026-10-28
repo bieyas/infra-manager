@@ -500,7 +500,7 @@ export default function CustomerForm() {
                 <option value="">— Pilih ODP —</option>
                 {odps.map(o => (
                   <option key={o.id} value={o.id}>
-                    {o.name}{o.odc?.name ? ` (${o.odc.name})` : ''}
+                    {o.name}
                   </option>
                 ))}
               </select>

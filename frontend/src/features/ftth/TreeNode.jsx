@@ -7,7 +7,6 @@ import { getUtilizationColor } from './mapColors'
 const TYPE_ICONS = {
   mikrotik: Router,
   olt: Server,
-  odc: Database,
   closure: Box,
   odp: Zap,
   onu: Wifi,
@@ -17,7 +16,6 @@ const TYPE_ICONS = {
 const TYPE_COLORS = {
   mikrotik: '#f97316', // Orange
   olt: '#3b82f6',      // Blue
-  odc: '#06b6d4',      // Cyan
   closure: '#f59e0b',  // Amber
   odp: '#8b5cf6',      // Violet
   onu: '#10b981',      // Emerald
@@ -29,7 +27,7 @@ function TreeNode({ node, allNodes, depth = 0, onSelect, selectedId, ancestorIds
   const isAncestor = ancestorIds?.has(node.id)
   const [open, setOpen] = useState(depth < 2 || isAncestor)
   const nodeRef  = useRef(null)
-  // Use children from treeData structure (ODC has ODP children)
+  // Use children from treeData structure (OLT has ODP children)
   const children = node.children || []
   const cfg      = MARKER_CFG[node.type]
   const Icon     = TYPE_ICONS[node.type] || Box
@@ -117,7 +115,7 @@ function TreeNode({ node, allNodes, depth = 0, onSelect, selectedId, ancestorIds
           {node.type.toUpperCase()}
         </span>
         
-        {/* Child count for OLT/ODC */}
+        {/* Child count for OLT/ODP */}
         {children.length > 0 && (
           <span className="text-[9px] text-muted ml-1">
             ({children.length})

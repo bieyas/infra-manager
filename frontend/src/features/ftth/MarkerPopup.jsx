@@ -76,23 +76,16 @@ function OltInfo({ node }) {
   )
 }
 
-function OdcInfo({ node, ftthNodes }) {
+function OdpInfo({ node, ftthNodes }) {
+  const parentOdp = ftthNodes?.find(n => n.id === node.uplinkOdpId && n.type === 'odp')
   const olt = ftthNodes?.find(n => n.id === node.oltId && n.type === 'olt')
   return (
     <>
-      <InfoRow icon={Server} label="OLT"      value={olt?.name || node.olt?.name} />
-      <InfoRow icon={Radio}  label="PON"      value={node.ponPort} mono />
-      <InfoRow icon={Cable}  label="Splitter" value={node.splitterRatio ? `1:${node.splitterRatio.replace('R1_', '')}` : null} />
-      <InfoRow icon={Box}    label="Core"     value={node.feederCore ? `Core ${node.feederCore}` : null} />
-    </>
-  )
-}
-
-function OdpInfo({ node, ftthNodes }) {
-  const odc = ftthNodes?.find(n => n.id === node.odcId && n.type === 'odc')
-  return (
-    <>
-      <InfoRow icon={Layers} label="ODC"      value={odc?.name || node.odc?.name} />
+      {parentOdp ? (
+        <InfoRow icon={Layers} label="Uplink" value={parentOdp.name} />
+      ) : olt ? (
+        <InfoRow icon={Server} label="OLT" value={`${olt.name}${node.ponPort ? ' / ' + node.ponPort : ''}`} />
+      ) : null}
       <InfoRow icon={Cable}  label="Splitter" value={node.splitterRatio ? `1:${node.splitterRatio.replace('R1_', '')}` : null} />
       <InfoRow icon={User}   label="Pelanggan" value={node.customerCount > 0 ? `${node.customerCount} aktif` : null} />
     </>
@@ -120,13 +113,11 @@ export default function MarkerPopup({ node, onDetail, onEdit, onClose, onNavigat
     : null
 
   // Rute navigasi per tipe
-  const editPath = node.type === 'odc'  ? `/odc/${node.id}/edit`
-    : node.type === 'odp'               ? `/odp/${node.id}/edit`
+  const editPath = node.type === 'odp'               ? `/odp/${node.id}/edit`
     : node.type === 'onu'               ? `/customers/${node.id}/edit`
     : null
 
-  const detailPath = node.type === 'odc'  ? `/odc/${node.id}`
-    : node.type === 'odp'                 ? `/odp/${node.id}/edit`
+  const detailPath = node.type === 'odp'                 ? `/odp/${node.id}/edit`
     : node.type === 'olt'                 ? `/devices/${node.id}`
     : node.type === 'onu'                 ? `/customers`
     : null
@@ -180,12 +171,11 @@ export default function MarkerPopup({ node, onDetail, onEdit, onClose, onNavigat
       {/* ── Info rows per tipe ── */}
       <div className="space-y-1 mb-2">
         {node.type === 'olt' && <OltInfo node={node} />}
-        {node.type === 'odc' && <OdcInfo node={node} ftthNodes={ftthNodes} />}
         {node.type === 'odp' && <OdpInfo node={node} ftthNodes={ftthNodes} />}
         {node.type === 'onu' && <OnuInfo node={node} ftthNodes={ftthNodes} />}
       </div>
 
-      {/* ── Utilization bar — hanya ODC & ODP ── */}
+      {/* ── Utilization bar — ODP ── */}
       {showUtil && (
         <div className="mb-2">
           <div className="flex justify-between items-center mb-0.5">

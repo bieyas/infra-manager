@@ -143,13 +143,6 @@ function CoverageOptions({ options, onChange }) {
       {/* Sliders */}
       <div className="p-3 space-y-4">
         <RadiusSlider
-          label="Radius ODC"
-          value={options.odcRadius}
-          min={50} max={1000} step={50}
-          color="#06b6d4"
-          onChange={val => set('odcRadius', val)}
-        />
-        <RadiusSlider
           label="Radius ODP"
           value={options.odpRadius}
           min={25} max={500} step={25}

@@ -16,7 +16,6 @@ import {
   splitterLabel, capacityFromRatio,
 } from './useDistribution'
 import OdpDetail from './OdpDetail'
-import OdcDetail from './OdcDetail'
 
 const STATUS_CFG = {
   ACTIVE:      { label: 'Aktif',     badge: 'online',  icon: CheckCircle2, cls: 'text-emerald-400' },
@@ -39,7 +38,7 @@ function PortDots({ used, capacity, max = 16 }) {
   )
 }
 
-function OdpCard({ odp, onClick, onEdit, onDelete, onShowOdc }) {
+function OdpCard({ odp, onClick, onEdit, onDelete }) {
   const cfg      = STATUS_CFG[odp.status] ?? STATUS_CFG.ACTIVE
   const StatusIcon = cfg.icon
 
@@ -94,18 +93,11 @@ function OdpCard({ odp, onClick, onEdit, onDelete, onShowOdc }) {
               <Radio size={9} /> {odp.olt.name} / {odp.ponPort ?? '—'}
             </span>
           )}
-          {odp.odc ? (
-            <span
-              onClick={e => { e.stopPropagation(); onShowOdc?.(odp.odc.id) }}
-              className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--bg-secondary)] text-secondary border border-[var(--border)] cursor-pointer hover:border-[var(--accent)]/50 hover:text-[var(--accent)] transition-colors"
-            >
-              <Network size={8} /> {odp.odc.name}
-            </span>
-          ) : odp.uplinkOdp ? (
+          {odp.uplinkOdp ? (
             <span className="px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20">↑ {odp.uplinkOdp.name}</span>
-          ) : (
+          ) : !odp.olt ? (
             <span className="text-muted px-2 py-0.5 rounded-full border border-[var(--border)]">Upstream belum diset</span>
-          )}
+          ) : null}
           <span className="text-muted">
             {splitterLabel(effectiveRatio)}
             {odp.splitters?.length > 1 && (
@@ -159,10 +151,8 @@ export default function OdpPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [search,     setSearch]     = useState('')
   const [statusFilt, setStatusFilt] = useState('')
-  const [odcFilt,    setOdcFilt]    = useState('')
   const [oltFilt,    setOltFilt]    = useState('')
   const [detailId,   setDetailId]   = useState(null)
-  const [odcDetailId, setOdcDetailId] = useState(null)
 
   // Open detail drawer from URL query param ?detail=<id>
   useEffect(() => {
@@ -177,7 +167,7 @@ export default function OdpPage() {
   const [confirmDel, setConfirmDel] = useState(null)
   const [deleting,   setDeleting]   = useState(null)
 
-  const { odps, loading, error, refetch } = useOdpList({ search, status: statusFilt, odcId: odcFilt, oltId: oltFilt })
+  const { odps, loading, error, refetch } = useOdpList({ search, status: statusFilt, oltId: oltFilt })
 
   const stats = useMemo(() => ({
     total:     odps.length,
@@ -252,13 +242,6 @@ export default function OdpPage() {
             <option key={olt.id} value={olt.id}>{olt.name}</option>
           ))}
         </select>
-        <select value={odcFilt} onChange={e => setOdcFilt(e.target.value)}
-          className="px-2 py-1.5 text-xs rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] text-primary focus:outline-none focus:border-[var(--accent)]">
-          <option value="">Semua ODC</option>
-          {[...new Map(odps.filter(o => o.odc).map(o => [o.odc.id, o.odc])).values()].map(odc => (
-            <option key={odc.id} value={odc.id}>{odc.name}</option>
-          ))}
-        </select>
         <button onClick={refetch}
           className="p-1.5 rounded-lg border border-[var(--border)] text-muted hover:text-primary hover:border-[var(--accent)] transition-colors">
           <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
@@ -288,7 +271,7 @@ export default function OdpPage() {
               onClick={() => setDetailId(odp.id)}
               onEdit={() => navigate(`/odp/${odp.id}/edit`)}
               onDelete={() => setConfirmDel(odp)}
-              onShowOdc={id => setOdcDetailId(id)} />
+/>
           ))}
         </div>
       )}
@@ -300,16 +283,6 @@ export default function OdpPage() {
           onNavigateOdp={(id) => setDetailId(id)} />
       )}
 
-      {/* ODC detail popup dari klik badge ODC di OdpCard */}
-      {odcDetailId && (
-        <OdcDetail
-          odcId={odcDetailId}
-          onClose={() => setOdcDetailId(null)}
-          onEdit={(odc) => { setOdcDetailId(null); navigate(`/odc/${odc.id}/edit`) }}
-          onDelete={(odc) => { setOdcDetailId(null) }}
-          onNavigateOdc={(id) => setOdcDetailId(id)}
-        />
-      )}
 
       <ConfirmModal
         isOpen={!!confirmDel}

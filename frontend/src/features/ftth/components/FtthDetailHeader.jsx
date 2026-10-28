@@ -3,7 +3,6 @@ import { X, Box, Circle, Zap, Home, AlertCircle, CheckCircle2, Wrench, Network, 
 import clsx from 'clsx'
 
 const TYPE_CFG = {
-  odc:     { label: 'ODC',     color: '#00cbca', icon: Box    },
   odp:     { label: 'ODP',     color: '#8b5cf6', icon: Circle },
   closure: { label: 'Closure', color: '#f59e0b', icon: Cable  },
   htb:     { label: 'HTB',     color: '#34d399', icon: Home   },

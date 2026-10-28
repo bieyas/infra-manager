@@ -45,31 +45,6 @@ const ICON_PATHS = {
     <circle cx="${size/2}" cy="${size/2-2}" r="5" fill="white" opacity="0.3"/>
   `,
 
-  // ODC - Optical Distribution Cabinet (square with splitter grid)
-  odc: (color, size) => `
-    <defs>
-      <filter id="shadow-${size}" x="-50%" y="-50%" width="200%" height="200%">
-        <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.3"/>
-      </filter>
-    </defs>
-    <!-- Square with rounded corners -->
-    <rect x="3" y="3" width="${size-6}" height="${size-6}" rx="4" 
-      fill="${color}" stroke="white" stroke-width="2" filter="url(#shadow-${size})"/>
-    <!-- Splitter grid pattern -->
-    <rect x="${size/2-8}" y="${size/2-6}" width="16" height="12" rx="1" fill="white" opacity="0.9"/>
-    <!-- Grid lines -->
-    <line x1="${size/2-4}" y1="${size/2-6}" x2="${size/2-4}" y2="${size/2+6}" stroke="${color}" stroke-width="0.8"/>
-    <line x1="${size/2+4}" y1="${size/2-6}" x2="${size/2+4}" y2="${size/2+6}" stroke="${color}" stroke-width="0.8"/>
-    <line x1="${size/2-8}" y1="${size/2}" x2="${size/2+8}" y2="${size/2}" stroke="${color}" stroke-width="0.8"/>
-    <!-- Port dots -->
-    <circle cx="${size/2-6}" cy="${size/2-3}" r="1" fill="${color}"/>
-    <circle cx="${size/2}" cy="${size/2-3}" r="1" fill="${color}"/>
-    <circle cx="${size/2+6}" cy="${size/2-3}" r="1" fill="${color}"/>
-    <circle cx="${size/2-6}" cy="${size/2+3}" r="1" fill="${color}"/>
-    <circle cx="${size/2}" cy="${size/2+3}" r="1" fill="${color}"/>
-    <circle cx="${size/2+6}" cy="${size/2+3}" r="1" fill="${color}"/>
-  `,
-
   // Closure - Fiber closure (circle with splicing symbol)
   closure: (color, size) => `
     <defs>

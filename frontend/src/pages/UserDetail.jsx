@@ -42,7 +42,6 @@ const FEATURE_GROUPS = [
     icon: Cable,
     features: [
       { key: 'ftth_map',    label: 'Peta FTTH',       icon: Map,             desc: 'Peta distribusi fiber optik' },
-      { key: 'odc',         label: 'ODC',             icon: Box,             desc: 'Optical Distribution Cabinet' },
       { key: 'odp',         label: 'ODP',             icon: Cable,           desc: 'Optical Distribution Point' },
       { key: 'customers',   label: 'Pelanggan',       icon: UserRound,       desc: 'Data pelanggan FTTH' },
     ],

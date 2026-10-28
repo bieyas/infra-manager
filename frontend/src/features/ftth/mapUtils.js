@@ -16,7 +16,7 @@ L.Icon.Default.mergeOptions({
 
 /**
  * Create a Leaflet divIcon with custom SVG marker
- * @param {string} type - Marker type (mikrotik, olt, odc, odp, closure, onu, htb)
+ * @param {string} type - Marker type (mikrotik, olt, odp, closure, onu, htb)
  * @param {Object} options - Icon options
  * @param {boolean} options.active - Show active/selected ring
  * @param {number|null} options.utilization - Utilization percentage for color coding
@@ -114,11 +114,9 @@ export const CABLE_TYPES = {
  * Connection type mapping to cable styles
  */
 export const CONNECTION_CABLE_MAP = {
-  'olt-odc': 'feeder',
-  'odc-odp': 'distribution',
+  'olt-odp': 'feeder',
   'odp-odp': 'distribution',
   'odp-onu': 'drop',
-  'odc-closure': 'feeder',
   'closure-odp': 'distribution',
   'mikrotik-olt': 'feeder',
 }
@@ -135,8 +133,8 @@ export function buildCables(nodes, options = {}) {
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]))
   
   return nodes.reduce((acc, n) => {
-    // OLT → ODC connection (via oltId on ODC nodes)
-    if (n.type === 'odc' && n.oltId && byId[n.oltId]) {
+    // OLT → ODP direct connection (via oltId on ODP nodes)
+    if (n.type === 'odp' && !n.uplinkOdpId && n.oltId && byId[n.oltId]) {
       const parent = byId[n.oltId]
       acc.push({
         key: `${parent.id}-${n.id}-feeder`,
@@ -146,23 +144,7 @@ export function buildCables(nodes, options = {}) {
         toId: n.id,
         type: 'feeder',
         style: CABLE_TYPES.feeder,
-        width: 4,
-      })
-    }
-
-    // ODC → ODP connection (via odcId)
-    if (n.type === 'odp' && n.odcId && byId[n.odcId]) {
-      const parent = byId[n.odcId]
-      const cableType = CONNECTION_CABLE_MAP['odc-odp'] || defaultCableType
-      acc.push({
-        key: `${parent.id}-${n.id}`,
-        from: [parent.lat, parent.lng],
-        to: [n.lat, n.lng],
-        fromId: parent.id,
-        toId: n.id,
-        type: cableType,
-        style: CABLE_TYPES[cableType],
-        width: 2,
+        width: 3,
       })
     }
     
@@ -283,24 +265,14 @@ export function generateCurvedCable(from, to, curvature = 0.2) {
 export function buildEdges(nodes) {
   const byId = Object.fromEntries(nodes.map(n => [n.id, n]))
   return nodes.reduce((acc, n) => {
-    // OLT → ODC feeder
-    if (n.type === 'odc' && n.oltId && byId[n.oltId]) {
+    // OLT → ODP direct feeder
+    if (n.type === 'odp' && !n.uplinkOdpId && n.oltId && byId[n.oltId]) {
       const p = byId[n.oltId]
       acc.push({
         key:   `${p.id}-${n.id}-feeder`,
         from:  [p.lat, p.lng],
         to:    [n.lat, n.lng],
         color: '#1e40af', // dark blue for feeder
-      })
-    }
-    // ODC → ODP
-    if (n.type === 'odp' && n.odcId && byId[n.odcId]) {
-      const p = byId[n.odcId]
-      acc.push({
-        key:   `${p.id}-${n.id}`,
-        from:  [p.lat, p.lng],
-        to:    [n.lat, n.lng],
-        color: '#22c55e', // green for odc-odp
       })
     }
     // ODP cascade (via uplinkOdpId)
@@ -333,11 +305,11 @@ export function getAncestorIds(id, allNodes) {
   let cur    = byId[id]
   if (!cur) return ids
 
-  // Walk up: ONU→ODP, ODP→ODC or ODP→ODP(uplink), ODC→OLT
+  // Walk up: ONU→ODP, ODP→ODP(cascade) or ODP→OLT
   const visited = new Set()
   while (cur && !visited.has(cur.id)) {
     visited.add(cur.id)
-    const parentKey = cur.odpId || cur.odcId || cur.oltId || cur.uplinkOdpId || cur.parentId
+    const parentKey = cur.odpId || cur.uplinkOdpId || cur.oltId || cur.parentId
     if (parentKey && byId[parentKey]) {
       ids.add(parentKey)
       cur = byId[parentKey]

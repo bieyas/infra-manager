@@ -647,7 +647,7 @@ export default function DeviceForm({ device, onSave, onClose, loading: savingPro
               <>
                 <div className="p-3 rounded-lg bg-[var(--accent-glow)] border border-[var(--accent)]/20 text-xs text-secondary mb-2">
                   Konfigurasi khusus OLT. <strong>PON Count</strong> menentukan jumlah port PON yang tersedia
-                  dan digunakan sebagai referensi saat ODC memilih uplink ke OLT ini.
+                  dan digunakan sebagai referensi saat ODP memilih uplink ke OLT ini.
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">

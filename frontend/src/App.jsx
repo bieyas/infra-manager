@@ -29,9 +29,7 @@ const Ipam = lazy(() => import('./pages/Ipam'))
 const NotFound = lazy(() => import('./pages/NotFound'))
 const Users = lazy(() => import('./pages/Users'))
 const UserDetail = lazy(() => import('./pages/UserDetail'))
-const OdcPage = lazy(() => import('./features/distribution/OdcPage'))
 const OdpPage = lazy(() => import('./features/distribution/OdpPage'))
-const OdcFormPage = lazy(() => import('./features/distribution/OdcFormPage'))
 const OdpFormPage = lazy(() => import('./features/distribution/OdpFormPage'))
 const QrScanPage      = lazy(() => import('./pages/QrScanPage'))
 const CustomerPage    = lazy(() => import('./features/customers/CustomerPage'))
@@ -62,9 +60,6 @@ export default function App() {
               <Route path="/alerts"     element={<Alerts />} />
               <Route path="/vlans"      element={<Vlans />} />
               <Route path="/ftth"       element={<FtthMap />} />
-              <Route path="/odc"           element={<OdcPage />} />
-              <Route path="/odc/new"        element={<MapSettingsProvider><OdcFormPage /></MapSettingsProvider>} />
-              <Route path="/odc/:id/edit"   element={<MapSettingsProvider><OdcFormPage /></MapSettingsProvider>} />
               <Route path="/odp"           element={<OdpPage />} />
               <Route path="/odp/new"        element={<MapSettingsProvider><OdpFormPage /></MapSettingsProvider>} />
               <Route path="/odp/:id/edit"   element={<MapSettingsProvider><OdpFormPage /></MapSettingsProvider>} />

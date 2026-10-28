@@ -15,7 +15,6 @@ router.get('/stats', async (req, res, next) => {
     const [
       deviceGroups,
       alertGroups,
-      odcCount,
       odpCount,
       customerStats,
       customerConnectionStats,
@@ -34,8 +33,6 @@ router.get('/stats', async (req, res, next) => {
         by: ['severity', 'acked'],
         _count: { _all: true },
       }),
-      // ODC total
-      prisma.odc.count(),
       // ODP total
       prisma.odp.count(),
       // Customer by serviceStatus
@@ -103,7 +100,7 @@ router.get('/stats', async (req, res, next) => {
     res.json({
       devices: deviceStats,
       alerts: alertStats,
-      odc: { total: odcCount },
+      odc: { total: 0 },
       odp: { total: odpCount },
       customers,
       customerSync: customerSyncDevices

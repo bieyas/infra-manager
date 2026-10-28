@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api } from '../../lib/api.js'
 
 export function useFtthData() {
-  const [odcs, setOdcs] = useState([])
   const [odps, setOdps] = useState([])
   const [olts, setOlts] = useState([])
   const [customers, setCustomers] = useState([])
@@ -13,13 +12,11 @@ export function useFtthData() {
     setLoading(true)
     setError(null)
     try {
-      const [odcRes, odpRes, devRes, custRes] = await Promise.all([
-        api.get('/odc'),
+      const [odpRes, devRes, custRes] = await Promise.all([
         api.get('/odp'),
         api.get('/devices?type=olt'),
-        api.get('/odp/customers').catch(() => []), // may not exist yet
+        api.get('/odp/customers').catch(() => []),
       ])
-      setOdcs(odcRes || [])
       setOdps(odpRes || [])
       setOlts(devRes || [])
       setCustomers(custRes || [])
@@ -53,32 +50,6 @@ export function useFtthData() {
         utilization: null,
       }))
 
-    // ODC nodes
-    const odcNodes = odcs.map(o => {
-      const total = o.totalOutputs || getCapacity(o.splitterRatio)
-      const used = o.usedOutputs ?? o.usedPorts ?? 0
-      return {
-        id: o.id,
-        type: 'odc',
-        name: o.name,
-        lat: o.lat,
-        lng: o.lng,
-        address: o.address,
-        status: (o.status || 'active').toLowerCase(),
-        capacity: total,
-        usedPorts: used,
-        utilization: calcUtil(used, total),
-        oltId: o.oltId,
-        olt: o.olt,
-        ponPort: o.ponPort,
-        uplinkType: o.uplinkType,
-        uplinkOdcId: o.uplinkOdcId,
-        splitterRatio: o.splitterRatio,
-        feederCore: o.feederCore,
-        feederLabel: o.feederLabel,
-      }
-    })
-
     // ODP nodes
     const odpNodes = odps.map(o => {
       const total = o.totalOutputs || getCapacity(o.splitterRatio)
@@ -94,12 +65,11 @@ export function useFtthData() {
         capacity: total,
         usedPorts: used,
         utilization: calcUtil(used, total),
-        odcId: o.odcId,
-        odc: o.odc,
         uplinkOdpId: o.uplinkOdpId,
         uplinkOdp: o.uplinkOdp,
         uplinkType: o.uplinkType,
         oltId: o.oltId,
+        olt: o.olt,
         ponPort: o.ponPort,
         splitterRatio: o.splitterRatio,
         customerCount: o.customerCount ?? o._count?.customers ?? 0,
@@ -124,11 +94,11 @@ export function useFtthData() {
         utilization: null,
       }))
 
-    return [...oltNodes, ...odcNodes, ...odpNodes, ...custNodes]
+    return [...oltNodes, ...odpNodes, ...custNodes]
       .filter(n => n.lat && n.lng)
-  }, [olts, odcs, odps, customers])
+  }, [olts, odps, customers])
 
-  // Build tree: OLT → ODC → ODP (with cascade) → Customer
+  // Build tree: OLT → ODP (with cascade) → Customer
   const treeData = useMemo(() => {
     const oltMap = {}
 
@@ -145,14 +115,9 @@ export function useFtthData() {
       }
     })
 
-    // Build ODP lookup by odcId and uplinkOdpId
-    const odpsByOdc = {}
+    // Build ODP lookup by uplinkOdpId
     const odpsByUplink = {}
     odps.forEach(o => {
-      if (o.odcId) {
-        if (!odpsByOdc[o.odcId]) odpsByOdc[o.odcId] = []
-        odpsByOdc[o.odcId].push(o)
-      }
       if (o.uplinkOdpId) {
         if (!odpsByUplink[o.uplinkOdpId]) odpsByUplink[o.uplinkOdpId] = []
         odpsByUplink[o.uplinkOdpId].push(o)
@@ -206,48 +171,34 @@ export function useFtthData() {
       }
     }
 
-    // Build ODC branches
-    odcs.forEach(odc => {
-      const oltKey = odc.oltId || 'unknown'
-      if (!oltMap[oltKey]) {
-        oltMap[oltKey] = {
-          id: oltKey,
-          type: 'olt',
-          name: odc.olt?.name || oltKey,
-          lat: odc.lat,
-          lng: odc.lng,
-          status: 'active',
-          children: [],
+    // Attach direct ODPs to OLT (not cascaded from another ODP)
+    const unattachedOdps = []
+    odps.forEach(odp => {
+      if (!odp.uplinkOdpId) {
+        if (odp.oltId && oltMap[odp.oltId]) {
+          oltMap[odp.oltId].children.push(buildOdpTree(odp))
+        } else {
+          unattachedOdps.push(buildOdpTree(odp))
         }
       }
-
-      const total = odc.totalOutputs || getCapacity(odc.splitterRatio)
-      const used = odc.usedOutputs ?? odc.usedPorts ?? 0
-
-      // Only direct ODPs (not cascaded from another ODP)
-      const directOdps = (odpsByOdc[odc.id] || []).filter(o => !o.uplinkOdpId)
-      const odpChildren = directOdps.map(buildOdpTree)
-
-      oltMap[oltKey].children.push({
-        id: odc.id,
-        type: 'odc',
-        name: odc.name,
-        lat: odc.lat,
-        lng: odc.lng,
-        status: (odc.status || 'active').toLowerCase(),
-        utilization: calcUtil(used, total),
-        capacity: total,
-        usedPorts: used,
-        children: odpChildren,
-      })
     })
 
-    return Object.values(oltMap)
-  }, [olts, odcs, odps, customers])
+    const result = Object.values(oltMap)
+    if (unattachedOdps.length > 0) {
+      result.push({
+        id: 'unattached',
+        type: 'olt',
+        name: 'ODP Standalone / Tanpa OLT',
+        status: 'active',
+        children: unattachedOdps,
+      })
+    }
+
+    return result
+  }, [olts, odps, customers])
 
   return {
     olts,
-    odcs,
     odps,
     customers,
     ftthNodes,

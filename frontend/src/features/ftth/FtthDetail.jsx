@@ -11,7 +11,6 @@ import InfoSection from './components/InfoSection'
 import ActionButtons from './components/ActionButtons'
 
 const TYPE_CFG = {
-  odc:     { label: 'ODC',     color: '#00cbca', icon: Box    },
   odp:     { label: 'ODP',     color: '#8b5cf6', icon: Circle },
   closure: { label: 'Closure', color: '#f59e0b', icon: Cable  },
   olt:     { label: 'OLT',     color: '#22c55e', icon: Zap    },
@@ -40,7 +39,7 @@ export default function FtthDetail({ node, allNodes, onClose, onEdit, onDelete }
 
   if (!node) return null
 
-  const cfg        = TYPE_CFG[node.type] ?? TYPE_CFG.odc
+  const cfg        = TYPE_CFG[node.type] ?? TYPE_CFG.odp
   const statusCfg  = STATUS_CFG[node.status] ?? STATUS_CFG.active
   const StatusIcon = statusCfg.icon
   const TypeIcon   = cfg.icon
@@ -54,10 +53,10 @@ export default function FtthDetail({ node, allNodes, onClose, onEdit, onDelete }
     return node?.olt || null
   }, [node?.oltId, node?.olt, allNodes])
   
-  const parentOdc = useMemo(() => {
-    if (node?.odcId && allNodes) return allNodes.find(n => n.id === node.odcId && n.type === 'odc')
+  const parentOdp = useMemo(() => {
+    if (node?.uplinkOdpId && allNodes) return allNodes.find(n => n.id === node.uplinkOdpId && n.type === 'odp')
     return parent
-  }, [node?.odcId, parent, allNodes])
+  }, [node?.uplinkOdpId, parent, allNodes])
   
   const children = useMemo(() => 
     (allNodes ?? []).filter(n => n.parentId === node.id),
@@ -122,7 +121,7 @@ export default function FtthDetail({ node, allNodes, onClose, onEdit, onDelete }
               <div className="space-y-3">
                 <h4 className="text-[11px] font-semibold text-muted uppercase tracking-wide">Koneksi Jaringan</h4>
                 
-                <InfoSection node={node} parentOlt={parentOlt} parentOdc={parentOdc} />
+                <InfoSection node={node} parentOlt={parentOlt} parentOdp={parentOdp} />
                 
                 <div className="grid grid-cols-2 gap-2">
                   <InfoRow label="Tipe" value={cfg.label} />
@@ -256,7 +255,7 @@ export default function FtthDetail({ node, allNodes, onClose, onEdit, onDelete }
               {children.length === 0 ? (
                 <p className="text-xs text-muted text-center py-8">Tidak ada downline</p>
               ) : children.map(child => {
-                const childCfg = TYPE_CFG[child.type] ?? TYPE_CFG.odc
+                const childCfg = TYPE_CFG[child.type] ?? TYPE_CFG.odp
                 const ChildIcon = childCfg.icon
                 return (
                   <div

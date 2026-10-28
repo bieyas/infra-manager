@@ -18,7 +18,7 @@ function parseQrUrl(text) {
       return { type: parts[scanIdx + 1], id: parts[scanIdx + 2] }
     }
   } catch {}
-  const m = text.match(/^(odc|odp|customer):(.+)$/)
+  const m = text.match(/^(odp|customer):(.+)$/)
   if (m) return { type: m[1], id: m[2] }
   return null
 }
@@ -26,7 +26,6 @@ function parseQrUrl(text) {
 // ── Fetch data lengkap berdasarkan tipe ──────────────────────────────────────
 async function fetchNodeInfo(type, id) {
   switch (type) {
-    case 'odc':      return api.get(`/odc/${id}`)
     case 'odp':      return api.get(`/odp/${id}`)
     case 'customer': return api.get(`/customers/${id}`)
     default:         throw new Error('Tipe tidak dikenal')
@@ -35,7 +34,6 @@ async function fetchNodeInfo(type, id) {
 
 // ── Config per tipe ──────────────────────────────────────────────────────────
 const TYPE_INFO = {
-  odc:      { label: 'ODC', Icon: Box,        color: 'text-cyan-400',    border: 'border-cyan-500/30',    bg: 'bg-cyan-500/10'    },
   odp:      { label: 'ODP', Icon: Cable,      color: 'text-violet-400',  border: 'border-violet-500/30',  bg: 'bg-violet-500/10'  },
   customer: { label: 'Pelanggan', Icon: UserRound, color: 'text-emerald-400', border: 'border-emerald-500/30', bg: 'bg-emerald-500/10' },
 }
@@ -61,7 +59,6 @@ function NodeInfoRows({ type, node }) {
         {node.pppoeUsername && <Row label="PPPoE" value={node.pppoeUsername} mono />}
         {node.onuSn && <Row label="ONU S/N" value={node.onuSn} mono />}
         {node.odp && <Row label="ODP" value={node.odp.name} />}
-        {node.odp?.odc && <Row label="ODC" value={node.odp.odc.name} />}
         <div className="flex items-center gap-2 pt-1">
           <span className="text-muted">Status:</span>
           <span className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${svc.bg} ${svc.color}`}>
@@ -73,24 +70,11 @@ function NodeInfoRows({ type, node }) {
     )
   }
 
-  if (type === 'odc') {
-    return (
-      <div className="space-y-2 text-xs">
-        <Row label="Nama"    value={node.name} bold />
-        {node.location && <Row label="Lokasi" value={node.location} icon={<MapPin size={11} className="text-muted" />} />}
-        {node.olt && <Row label="OLT" value={`${node.olt.name} / ${node.ponPort ?? '—'}`} mono />}
-        <Row label="Port" value={`${node.usedPorts ?? 0} / ${node.capacity ?? '—'} terpakai`} />
-        {node.splitterRatio && <Row label="Splitter" value={node.splitterRatio.replace('R', '').replace('_', ':')} />}
-      </div>
-    )
-  }
-
   if (type === 'odp') {
     return (
       <div className="space-y-2 text-xs">
         <Row label="Nama"    value={node.name} bold />
         {node.location && <Row label="Lokasi" value={node.location} icon={<MapPin size={11} className="text-muted" />} />}
-        {node.odc && <Row label="ODC" value={node.odc.name} />}
         {node.olt && <Row label="OLT" value={`${node.olt.name} / ${node.ponPort ?? '—'}`} mono />}
         <Row label="Port" value={`${node.usedPorts ?? 0} / ${node.capacity ?? '—'} terpakai`} />
         {node.splitterRatio && <Row label="Splitter" value={node.splitterRatio.replace('R', '').replace('_', ':')} />}
@@ -230,7 +214,6 @@ export default function QrScanPage() {
   const goToDetail = () => {
     if (!result) return
     switch (result.type) {
-      case 'odc':      return navigate(`/odc?detail=${result.id}`)
       case 'odp':      return navigate(`/odp?detail=${result.id}`)
       case 'customer': return navigate(`/customers?detail=${result.id}`)
     }
@@ -256,7 +239,7 @@ export default function QrScanPage() {
           </div>
           <div>
             <h1 className="text-base font-bold text-primary">Scan QR Code</h1>
-            <p className="text-xs text-muted">Scan label ODC / ODP / Pelanggan</p>
+            <p className="text-xs text-muted">Scan label ODP / Pelanggan</p>
           </div>
         </div>
 
@@ -301,7 +284,7 @@ export default function QrScanPage() {
               )}
               {camReady && (
                 <p className="text-center text-[10px] text-muted py-2.5 px-4 border-t border-[var(--border)]">
-                  Arahkan kamera ke QR Code pada label ODC / ODP / Pelanggan
+                  Arahkan kamera ke QR Code pada label ODP / Pelanggan
                 </p>
               )}
             </div>
@@ -317,7 +300,7 @@ export default function QrScanPage() {
                 type="text"
                 value={manual}
                 onChange={e => setManual(e.target.value)}
-                placeholder="https://... atau odc:clxxxxxx"
+                placeholder="https://... atau odp:clxxxxxx"
                 className="w-full px-3 py-2.5 text-sm rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] text-primary focus:outline-none focus:border-[var(--accent)] font-mono"
                 autoFocus
               />
@@ -331,7 +314,6 @@ export default function QrScanPage() {
             </div>
             <p className="text-[10px] text-muted text-center">
               Format: URL penuh dari label, atau{' '}
-              <span className="font-mono bg-[var(--bg-secondary)] px-1 rounded">odc:ID</span>
               {' / '}
               <span className="font-mono bg-[var(--bg-secondary)] px-1 rounded">odp:ID</span>
               {' / '}

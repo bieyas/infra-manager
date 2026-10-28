@@ -1,6 +1,6 @@
 // Color utilities for FTTH map based on utilization
 
-export function getUtilizationColor(utilization, type = 'odc') {
+export function getUtilizationColor(utilization, type = 'odp') {
   if (utilization >= 90) {
     return '#ef4444' // red-500 - Critical
   }
@@ -10,7 +10,7 @@ export function getUtilizationColor(utilization, type = 'odc') {
   if (utilization >= 50) {
     return '#22c55e' // green-500 - Good
   }
-  return type === 'odc' ? '#3b82f6' : '#06b6d4' // blue/cyan - Low usage
+  return '#06b6d4' // cyan - Low usage
 }
 
 export function getUtilizationBg(utilization) {
@@ -22,15 +22,6 @@ export function getUtilizationBg(utilization) {
 
 export function getMarkerIcon(type, utilization) {
   const isFull = utilization >= 90
-  
-  if (type === 'odc') {
-    return {
-      color: getUtilizationColor(utilization, 'odc'),
-      shape: 'square',
-      icon: isFull ? '🔴' : '📦',
-    }
-  }
-  
   return {
     color: getUtilizationColor(utilization, 'odp'),
     shape: 'circle',
@@ -44,7 +35,6 @@ export function createMarkerSvg(type, utilization, size = 28) {
   const isFull = utilization >= 90
   const strokeColor = isFull ? '#7f1d1d' : '#1e293b'
   
-  // Simple SVG marker
   return `
     <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">
       <defs>
@@ -52,11 +42,8 @@ export function createMarkerSvg(type, utilization, size = 28) {
           <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.3"/>
         </filter>
       </defs>
-      <${type === 'odc' ? 'rect' : 'circle'} 
-        ${type === 'odc' 
-          ? `x="2" y="2" width="${size-4}" height="${size-4}" rx="4"` 
-          : `cx="${size/2}" cy="${size/2}" r="${(size-4)/2}"`
-        }
+      <circle 
+        cx="${size/2}" cy="${size/2}" r="${(size-4)/2}"
         fill="${color}" 
         stroke="${strokeColor}" 
         stroke-width="2"
@@ -69,7 +56,7 @@ export function createMarkerSvg(type, utilization, size = 28) {
         dominant-baseline="central"
         font-size="${size/2}"
       >
-        ${type === 'odc' ? '📦' : '📍'}
+        📍
       </text>
     </svg>
   `
@@ -78,9 +65,9 @@ export function createMarkerSvg(type, utilization, size = 28) {
 // Connection line colors
 export function getConnectionColor(type) {
   switch (type) {
-    case 'olt-odc': return '#6366f1' // indigo
-    case 'odc-odp': return '#22c55e' // green
+    case 'olt-odp': return '#6366f1' // indigo feeder
     case 'odp-odp': return '#06b6d4' // cyan cascade
+    case 'odp-onu': return '#10b981' // emerald drop
     default: return '#94a3b8' // slate
   }
 }

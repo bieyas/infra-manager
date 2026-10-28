@@ -4,7 +4,6 @@ export const MARKER_CFG = {
   olt:       { color: '#3b82f6', label: 'OLT', size: 32, shape: 'diamond', category: 'core' }, // Blue
   
   // Distribution
-  odc:       { color: '#06b6d4', label: 'ODC', size: 30, shape: 'square', category: 'distribution' },   // Cyan
   closure:   { color: '#f59e0b', label: 'CLO', size: 24, shape: 'circle', category: 'distribution' },   // Amber
   
   // Access
@@ -16,7 +15,7 @@ export const MARKER_CFG = {
 // Category groupings for layer control
 export const MARKER_CATEGORIES = {
   core: { label: 'Core Network', types: ['mikrotik', 'olt'] },
-  distribution: { label: 'Distribusi', types: ['odc', 'closure'] },
+  distribution: { label: 'Distribusi', types: ['closure'] },
   access: { label: 'Akses Pelanggan', types: ['odp', 'onu', 'htb'] },
 }
 
@@ -26,7 +25,6 @@ export const LAYER_TYPES = [
   { id: 'olt',      label: 'OLT',      color: '#3b82f6', category: 'core' },
   
   // Distribution
-  { id: 'odc',       label: 'ODC',       color: '#06b6d4', category: 'distribution' },
   { id: 'closure',   label: 'Closure',   color: '#f59e0b', category: 'distribution' },
   
   // Access

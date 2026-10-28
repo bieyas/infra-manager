@@ -469,7 +469,7 @@ export default function Settings() {
             </CardHeader>
             <CardBody className="space-y-4">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-secondary">Rasio Splitter ODC Default</label>
+                <label className="text-xs font-medium text-secondary">Rasio Splitter Default</label>
                 <Select value={prefs.defaultOdcSplitter} onChange={v => set('defaultOdcSplitter', v)} className="max-w-xs">
                   <option value="R1_2">1:2 (2 port)</option>
                   <option value="R1_4">1:4 (4 port)</option>

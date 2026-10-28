@@ -19,12 +19,12 @@ function qrUrl(type, id) {
 // - Epson LabelWorks: 12mm, 18mm, 24mm tape
 // - Zebra ZD220/ZD230: 4"x2", 2"x1", 4"x6"
 export const LABEL_SIZES = [
-  // ── Label ODC/ODP (ditempel di box) ────────────────────────────────────
+  // ── Label ODP (ditempel di box) ────────────────────────────────────
   {
     id: 'odc_main',
     category: 'box',
     name: '62 × 100 mm',
-    desc: 'Brother QL-800 / Niimbot 60×100 — Label utama ODC/ODP',
+    desc: 'Brother QL-800 / Niimbot 60×100 — Label utama ODP',
     mmW: 62, mmH: 100,
     pxW: 234, pxH: 378,
     qrSize: 90,
@@ -34,7 +34,7 @@ export const LABEL_SIZES = [
     id: 'odc_medium',
     category: 'box',
     name: '60 × 40 mm',
-    desc: 'Niimbot B1/B21 — Label ODC/ODP ringkas',
+    desc: 'Niimbot B1/B21 — Label ODP ringkas',
     mmW: 60, mmH: 40,
     pxW: 226, pxH: 151,
     qrSize: 64,
@@ -50,7 +50,7 @@ export const LABEL_SIZES = [
     qrSize: 50,
     font: { title: 9, sub: 6, info: 6 },
   },
-  // ── Label kabel antar ODC-ODP (ditempel di kabel/patch) ────────────────
+  // ── Label kabel feeder/distribusi (ditempel di kabel/patch) ────────────────
   {
     id: 'cable_wrap',
     category: 'cable',
@@ -66,7 +66,7 @@ export const LABEL_SIZES = [
     id: 'cable_flag',
     category: 'cable',
     name: '25 × 38 mm (flag)',
-    desc: 'Dymo / Brother — Flag label kabel ODC-ODP',
+    desc: 'Dymo / Brother — Flag label kabel ODP',
     mmW: 25, mmH: 38,
     pxW: 94, pxH: 143,
     qrSize: 48,
@@ -97,67 +97,6 @@ export const LABEL_SIZES = [
 ]
 
 // ── Template renderers ─────────────────────────────────────────────────────
-function LabelOdc({ data, size }) {
-  const { odc } = data
-  const f = size.font
-  return (
-    <div
-      className="bg-white text-black flex flex-col overflow-hidden border border-gray-300"
-      style={{ width: size.pxW, height: size.pxH, fontFamily: 'monospace', padding: 6 }}
-    >
-      {/* Header strip */}
-      <div className="flex items-center gap-1 mb-1 pb-1 border-b border-gray-400">
-        <div className="bg-black text-white px-1.5 rounded font-bold" style={{ fontSize: f.title - 2 }}>
-          {odc.name?.split('-')[0] ?? 'ODC'}
-        </div>
-        <span className="font-bold truncate flex-1" style={{ fontSize: f.title }}>{odc.name}</span>
-      </div>
-      <div className="flex gap-2 flex-1">
-        {/* QR */}
-        <div className="flex flex-col items-center gap-0.5 shrink-0">
-          <QRCode value={qrUrl('odc', odc.id)} size={size.qrSize} level="M" />
-          <span style={{ fontSize: 6, color: '#666' }}>SCAN INFO</span>
-        </div>
-        {/* Info */}
-        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-          {odc.olt && (
-            <div style={{ fontSize: f.info }}>
-              <span className="text-gray-500">OLT: </span>
-              <span className="font-semibold">{odc.olt.name}</span>
-            </div>
-          )}
-          {odc.ponPort && (
-            <div style={{ fontSize: f.info }}>
-              <span className="text-gray-500">PON: </span>
-              <span className="font-semibold font-mono">{odc.ponPort}</span>
-            </div>
-          )}
-          {odc.address && (
-            <div style={{ fontSize: f.info }} className="truncate">
-              <span className="text-gray-500">Lokasi: </span>{odc.address}
-            </div>
-          )}
-          <div style={{ fontSize: f.info }}>
-            <span className="text-gray-500">Kapasitas: </span>
-            <span>{odc.usedPorts ?? 0}/{odc.capacity ?? '—'} port</span>
-          </div>
-          {odc.feederLabel && (
-            <div style={{ fontSize: f.info }}>
-              <span className="text-gray-500">Feeder: </span>
-              <span className="font-mono">{odc.feederLabel}</span>
-            </div>
-          )}
-          {odc.pic && (
-            <div style={{ fontSize: f.info }} className="mt-auto text-gray-400">
-              PIC: {odc.pic}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function LabelOdp({ data, size }) {
   const { odp } = data
   const f = size.font
@@ -188,12 +127,6 @@ function LabelOdp({ data, size }) {
               <span className="font-semibold font-mono">{odp.ponPort}</span>
             </div>
           )}
-          {odp.odc && (
-            <div style={{ fontSize: f.info }}>
-              <span className="text-gray-500">ODC: </span>
-              <span>{odp.odc.name}</span>
-            </div>
-          )}
           {odp.address && (
             <div style={{ fontSize: f.info }} className="truncate">
               <span className="text-gray-500">Lokasi: </span>{odp.address}
@@ -211,8 +144,7 @@ function LabelOdp({ data, size }) {
 
 function LabelCable({ data, size }) {
   // Label kabel antar ODC-ODP
-  const isOdc = !!data.odc
-  const node = data.odc ?? data.odp
+  const node = data.odp || data
   const f = size.font
   if (size.vertical) {
     return (
@@ -220,7 +152,7 @@ function LabelCable({ data, size }) {
         className="bg-white text-black flex flex-col items-center justify-between overflow-hidden border border-gray-300"
         style={{ width: size.pxW, height: size.pxH, fontFamily: 'monospace', padding: 4 }}
       >
-        <QRCode value={qrUrl(isOdc ? 'odc' : 'odp', node.id)} size={size.qrSize} level="M" />
+        <QRCode value={qrUrl('odp', node.id)} size={size.qrSize} level="M" />
         <div className="text-center" style={{ writingMode: 'vertical-rl', fontSize: f.title }}>
           <span className="font-bold">{node.name}</span>
         </div>
@@ -235,7 +167,7 @@ function LabelCable({ data, size }) {
       className="bg-white text-black flex items-center gap-2 overflow-hidden border border-gray-300"
       style={{ width: size.pxW, height: size.pxH, fontFamily: 'monospace', padding: 5 }}
     >
-      <QRCode value={qrUrl(isOdc ? 'odc' : 'odp', node.id)} size={size.qrSize} level="M" />
+      <QRCode value={qrUrl('odp', node.id)} size={size.qrSize} level="M" />
       <div className="flex flex-col gap-0.5 flex-1 min-w-0">
         <span className="font-bold truncate" style={{ fontSize: f.title }}>{node.name}</span>
         {node.feederLabel && <span className="font-mono text-gray-600" style={{ fontSize: f.info }}>Feeder: {node.feederLabel}</span>}
@@ -317,12 +249,12 @@ function LabelCustomer({ data, size }) {
 const TEMPLATES = [
   {
     id: 'label_odc',
-    label: 'Label ODC/ODP',
+    label: 'Label ODP',
     icon: Box,
-    desc: 'QR + OLT/PON + kapasitas. Tempel di box ODC/ODP.',
+    desc: 'QR + OLT/PON + kapasitas. Tempel di box ODP.',
     compatibleSizes: ['odc_main', 'odc_medium', 'odc_small'],
     categories: ['box'],
-    render: (data, size) => data.odc ? <LabelOdc data={data} size={size} /> : <LabelOdp data={data} size={size} />,
+    render: (data, size) => <LabelOdp data={data} size={size} />,
   },
   {
     id: 'label_cable',
@@ -355,7 +287,7 @@ const TEMPLATES = [
 
 // ── Category badge map ─────────────────────────────────────────────────────
 const CAT_INFO = {
-  box:      { label: 'Box ODC/ODP', color: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30' },
+  box:      { label: 'Box ODP', color: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30' },
   cable:    { label: 'Kabel',       color: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
   odp_port: { label: 'Port ODP',    color: 'bg-violet-500/15 text-violet-400 border-violet-500/30' },
   customer: { label: 'Pelanggan',   color: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
@@ -404,12 +336,12 @@ function triggerPrintAll(labels, size) {
  * Props:
  *   open         — boolean
  *   onClose      — () => void
- *   nodeType     — 'odc' | 'odp'
- *   data         — odc/odp object from useOdcDetail/useOdpDetail
+ *   nodeType     — 'odp'
+ *   data         — odp object from useOdpDetail
  *   initialPort  — number | 'all' | null
  *                  number → buka langsung ke template label_odp_port, pre-select port ini
  *                  'all'  → buka mode print semua port
- *                  null   → buka ke template label ODC/ODP (default)
+ *                  null   → buka ke template label ODP (default)
  */
 export default function LabelPrintModal({ open, onClose, nodeType, data, initialPort = null }) {
   const [templateId, setTemplateId] = useState('label_odc')
@@ -424,7 +356,7 @@ export default function LabelPrintModal({ open, onClose, nodeType, data, initial
   const size     = LABEL_SIZES.find(s => s.id === sizeId) ?? LABEL_SIZES[0]
 
   const renderData = useCallback(() => {
-    const base = nodeType === 'odc' ? { odc: data } : { odp: data }
+    const base = { odp: data }
     if (templateId === 'label_odp_port' && nodeType === 'odp') {
       const customers = data?.customers ?? []
       const customer  = customers[portIdx] ?? null
@@ -461,8 +393,8 @@ export default function LabelPrintModal({ open, onClose, nodeType, data, initial
         setPortIdx(0)
       }
     } else {
-      // null → label ODC/ODP biasa
-      setTemplateId(nodeType === 'odc' ? 'label_odc' : 'label_odc')
+      // null → label ODP biasa
+      setTemplateId('label_odc')
       setSizeId('odc_main')
       setMobileTab('config')
     }

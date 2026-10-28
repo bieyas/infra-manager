@@ -20,7 +20,6 @@ export const ROUTE_PERMISSION_MAP = {
   '/vlans':       'vlans',
   '/ipam':        'ipam',
   '/ftth':        'ftth_map',
-  '/odc':         'odc',
   '/odp':         'odp',
   '/customers':   'customers',
   '/helpdesk':    'helpdesk',
@@ -43,7 +42,6 @@ export const NAV_PERMISSION_MAP = {
   '/vlans':       'vlans',
   '/ipam':        'ipam',
   '/ftth':        'ftth_map',
-  '/odc':         'odc',
   '/odp':         'odp',
   '/customers':   'customers',
   '/settings':    'settings',
@@ -88,7 +86,7 @@ export function getPermissionKeyForPath(pathname) {
   // Exact match first
   if (ROUTE_PERMISSION_MAP[pathname]) return ROUTE_PERMISSION_MAP[pathname]
 
-  // Prefix match (e.g. /devices/abc → 'devices', /odc/new → 'odc')
+  // Prefix match (e.g. /devices/abc → 'devices')
   const sorted = Object.keys(ROUTE_PERMISSION_MAP)
     .filter(p => p !== '/')
     .sort((a, b) => b.length - a.length) // longest first

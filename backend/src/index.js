@@ -13,7 +13,6 @@ import ipamRouter    from './routes/ipam.js'
 import ipamV2Router  from './routes/ipam-v2.js'
 import ftthRouter    from './routes/ftth.js'
 import driverRouter  from './routes/driver.js'
-import odcRouter     from './routes/odc.js'
 import odpRouter     from './routes/odp.js'
 import splitterTypesRouter from './routes/splitter-types.js'
 import coverageZonesRouter from './routes/coverage-zones.js'
@@ -68,7 +67,6 @@ app.use('/api/ipam',       ipamRouter)
 app.use('/api/ipam/v2',    ipamV2Router)
 app.use('/api/ftth',       ftthRouter)
 app.use('/api/driver',    driverRouter)
-app.use('/api/odc',       odcRouter)
 app.use('/api/odp',       odpRouter)
 app.use('/api/splitter-types',  splitterTypesRouter)
 app.use('/api/coverage-zones', coverageZonesRouter)

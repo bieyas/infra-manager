@@ -96,7 +96,6 @@ function CustomerCard({ c, onClick, onEdit, onDelete }) {
           <div className="flex items-center gap-1.5 text-[10px] text-muted">
             <Cable size={9} className="shrink-0" />
             <span className="truncate">
-              {c.odp.odc?.name && <span className="opacity-50">{c.odp.odc.name} › </span>}
               <span className="text-primary">{c.odp.name}</span>
               {c.odpPort && <span className="text-[var(--accent)] font-mono ml-0.5">:{c.odpPort}</span>}
             </span>

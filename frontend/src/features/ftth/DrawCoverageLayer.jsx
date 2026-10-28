@@ -73,9 +73,8 @@ function DrawControl({ active, onCreated }) {
 }
 
 // ── Form simpan zona setelah gambar ─────────────────────────────────────────
-function SaveZoneForm({ coordinates, odcNodes, onSave, onCancel }) {
+function SaveZoneForm({ coordinates, onSave, onCancel }) {
   const [name, setName]     = useState('')
-  const [odcId, setOdcId]   = useState('')
   const [color, setColor]   = useState(COLORS[0])
   const [saving, setSaving] = useState(false)
   const [err, setErr]       = useState(null)
@@ -88,7 +87,6 @@ function SaveZoneForm({ coordinates, odcNodes, onSave, onCancel }) {
       const zone = await api.post('/coverage-zones', {
         name: name.trim(),
         coordinates,
-        odcId: odcId || null,
         color,
         opacity: 0.2,
       })
@@ -114,23 +112,9 @@ function SaveZoneForm({ coordinates, odcNodes, onSave, onCancel }) {
         <input
           value={name}
           onChange={e => setName(e.target.value)}
-          placeholder="mis. Coverage ODC-01 / Kelurahan X"
+          placeholder="mis. Area Kelurahan X"
           className="w-full text-[12px] px-2.5 py-1.5 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-primary focus:outline-none focus:border-[var(--accent)] transition-colors"
         />
-      </div>
-
-      <div>
-        <label className="block text-[10px] text-muted mb-1">Attach ke ODC (opsional)</label>
-        <select
-          value={odcId}
-          onChange={e => setOdcId(e.target.value)}
-          className="w-full text-[11px] px-2 py-1.5 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-primary focus:outline-none focus:border-[var(--accent)] transition-colors"
-        >
-          <option value="">— Tidak attach ke ODC —</option>
-          {odcNodes.map(n => (
-            <option key={n.id} value={n.id}>{n.name}</option>
-          ))}
-        </select>
       </div>
 
       <div>
@@ -208,7 +192,6 @@ function ZoneListPanel({ zones, onDelete, onClose }) {
             <span className="w-3 h-3 rounded-full shrink-0" style={{ background: z.color || '#06b6d4' }} />
             <div className="flex-1 min-w-0">
               <p className="text-[11px] font-medium text-primary truncate leading-tight">{z.name}</p>
-              {z.odc && <p className="text-[9px] text-muted truncate">{z.odc.name}</p>}
             </div>
             <button
               onClick={() => handleDelete(z.id)}
@@ -230,7 +213,6 @@ function ZoneListPanel({ zones, onDelete, onClose }) {
  * DrawCoverageLayer — floating panel + leaflet-draw untuk gambar/kelola zone
  *
  * Props:
- *  - nodes: FtthNode[] untuk daftar ODC di dropdown
  *  - zones: CoverageZone[] dari DB (state dari parent)
  *  - onZonesChange: callback(zones) setelah tambah/hapus
  */
@@ -238,7 +220,6 @@ export default function DrawCoverageLayer({ nodes = [], zones = [], onZonesChang
   const [mode, setMode]               = useState('idle') // 'idle' | 'drawing' | 'saving' | 'list'
   const [drawnCoords, setDrawnCoords] = useState(null)
 
-  const odcNodes = nodes.filter(n => n.type === 'odc')
 
   const handleCreated = useCallback((coords) => {
     setDrawnCoords(coords)
@@ -319,7 +300,6 @@ export default function DrawCoverageLayer({ nodes = [], zones = [], onZonesChang
           <div className="bg-card-var border border-[var(--border)] rounded-lg p-3 shadow-xl">
             <SaveZoneForm
               coordinates={drawnCoords}
-              odcNodes={odcNodes}
               onSave={handleSaved}
               onCancel={handleCancelDraw}
             />

@@ -14,7 +14,6 @@ import LayerPanel from './LayerPanel'
 import TreePanel from './TreePanel'
 import BottomSheet from './BottomSheet'
 import MarkerPopup from './MarkerPopup'
-import OdcDetail from '../distribution/OdcDetail'
 import OdpDetail from '../distribution/OdpDetail'
 import CustomerDetail from '../customers/CustomerDetail'
 import { useFtthData, useFtthFilter } from './useFtthData'
@@ -52,12 +51,11 @@ const SHEET_TABS = [
 export default function FtthMapPage() {
   const navigate = useNavigate()
   const { settings } = useMapSettings()
-  const { ftthNodes, treeData, olts, odcs, odps, customers, loading, error, refetch } = useFtthData()
+  const { ftthNodes, treeData, olts, odps, customers, loading, error, refetch } = useFtthData()
   
   const [layers,     setLayers]     = useState({ 
     mikrotik: true, 
     olt: true, 
-    odc: true, 
     odp: true, 
     closure: true, 
     onu: true,
@@ -132,11 +130,7 @@ export default function FtthMapPage() {
   }, [])
 
   const handleEditClick = (node) => {
-    if (node.type === 'odc') {
-      navigate(`/odc/${node.id}/edit`)
-    } else {
-      navigate(`/odp/${node.id}/edit`)
-    }
+    navigate(`/odp/${node.id}/edit`)
   }
 
   const handleDelete = (id) => {
@@ -386,13 +380,6 @@ export default function FtthMapPage() {
       </div>
 
       {/* ── Modals ── */}
-      {detailNode?.type === 'odc' && (
-        <OdcDetail
-          odcId={detailNode.id}
-          onClose={() => setDetailNode(null)}
-          onEdit={() => { navigate(`/odc/${detailNode.id}/edit`); setDetailNode(null) }}
-        />
-      )}
       {detailNode?.type === 'odp' && (
         <OdpDetail
           odpId={detailNode.id}

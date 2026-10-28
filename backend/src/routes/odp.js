@@ -24,13 +24,6 @@ function computeCapacity(odp) {
   return ratioToCapacity(odp.splitterRatio) ?? 0
 }
 
-/** After ODP save, sync usedPorts on parent ODC */
-async function syncOdcUsedPorts(odcId) {
-  if (!odcId) return
-  const count = await prisma.odp.count({ where: { odcId } })
-  await prisma.odc.update({ where: { id: odcId }, data: { usedPorts: count } })
-}
-
 /** After customer save, sync usedPorts on parent ODP */
 async function syncOdpUsedPorts(odpId) {
   if (!odpId) return
@@ -134,10 +127,9 @@ async function cascadeUpdateDownstreamOdp(odpId, newOltId, newPonPort, tx, depth
 // ── GET /api/odp  — list all ODPs ─────────────────────────────────────────────
 router.get('/', async (req, res, next) => {
   try {
-    const { odcId, oltId, status, search } = req.query
+    const { oltId, status, search } = req.query
 
     const where = {}
-    if (odcId)  where.odcId  = odcId
     if (oltId)  where.oltId  = oltId
     if (status) where.status = status.toUpperCase()
     if (search) where.OR = [
@@ -148,7 +140,6 @@ router.get('/', async (req, res, next) => {
     const odps = await prisma.odp.findMany({
       where,
       include: {
-        odc: { select: { id: true, name: true } },
         olt: { select: { id: true, name: true, ip: true } },
         uplinkOdp: { select: { id: true, name: true } },
         splitters: {
@@ -212,7 +203,6 @@ router.get('/:id', async (req, res, next) => {
     const odp = await prisma.odp.findUnique({
       where: { id: req.params.id },
       include: {
-        odc: { select: { id: true, name: true, oltId: true, ponPort: true } },
         olt: { select: { id: true, name: true, ip: true } },
         uplinkOdp: { select: { id: true, name: true } },
         downlinkOdps: { select: { id: true, name: true, uplinkOdpCore: true, status: true, usedPorts: true, splitterRatio: true } },
@@ -241,7 +231,7 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
   try {
     const {
       name, address, lat, lng,
-      uplinkType, odcId, oltId, ponPort,
+      uplinkType, oltId, ponPort,
       uplinkOdpId, uplinkPort,
       feederLabel, feederCores, feederCore, feederPass,
       fiberLength, inputPower,
@@ -251,16 +241,9 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
 
     if (!name) return res.status(400).json({ error: 'name required' })
 
-    // Inherit OLT/PON from parent ODC or ODP if not explicitly provided
+    // Inherit OLT/PON from parent ODP if cascade and not explicitly provided
     let resolvedOltId  = oltId  || null
     let resolvedPon    = ponPort || null
-    if (uplinkType === 'odc' && odcId && (!resolvedOltId || !resolvedPon)) {
-      const parentOdc = await prisma.odc.findUnique({ where: { id: odcId }, select: { oltId: true, ponPort: true } })
-      if (parentOdc) {
-        resolvedOltId = resolvedOltId || parentOdc.oltId
-        resolvedPon   = resolvedPon   || parentOdc.ponPort
-      }
-    }
     if (uplinkType === 'odp' && uplinkOdpId && (!resolvedOltId || !resolvedPon)) {
       const parentOdp = await prisma.odp.findUnique({ where: { id: uplinkOdpId }, select: { oltId: true, ponPort: true } })
       if (parentOdp) {
@@ -275,8 +258,7 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
           name, address,
           lat: lat ? Number(lat) : null,
           lng: lng ? Number(lng) : null,
-          uplinkType:  uplinkType || 'odc',
-          odcId:       uplinkType === 'odc' ? (odcId || null) : null,
+          uplinkType:  uplinkType || 'olt',
           uplinkOdpId: uplinkType === 'odp' ? (uplinkOdpId || null) : null,
           uplinkPort:  uplinkPort || null,
           oltId:       resolvedOltId,
@@ -293,7 +275,6 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
           pic, notes,
         },
         include: {
-          odc: { select: { id: true, name: true } },
           olt: { select: { id: true, name: true, ip: true } },
         },
       })
@@ -369,8 +350,6 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
       return odp
     })
 
-    await syncOdcUsedPorts(result.odcId)
-
     res.status(201).json({ ...result, capacity: ratioToCapacity(result.splitterRatio), available: ratioToCapacity(result.splitterRatio) })
   } catch (e) {
     if (e.code === 'P2002') return res.status(409).json({ error: 'ODP name already exists' })
@@ -384,12 +363,12 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
     const result = await prisma.$transaction(async (tx) => {
       const old = await tx.odp.findUnique({ 
         where: { id: req.params.id }, 
-        select: { odcId: true, oltId: true, ponPort: true, uplinkPort: true, uplinkOdpId: true, uplinkType: true } 
+        select: { oltId: true, ponPort: true, uplinkPort: true, uplinkOdpId: true, uplinkType: true } 
       })
       if (!old) return res.status(404).json({ error: 'ODP not found' })
 
       const allowed = [
-        'name','address','lat','lng','uplinkType','odcId','oltId','ponPort',
+        'name','address','lat','lng','uplinkType','oltId','ponPort',
         'uplinkOdpId','uplinkPort',
         'feederLabel','feederCores','feederCore','feederPass',
         'fiberLength','inputPower','splitterRatio','splitters',
@@ -407,11 +386,6 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
         }
       }
 
-      // Inherit OLT/PON if odcId changed
-      if (data.odcId && !data.oltId) {
-        const parentOdc = await tx.odc.findUnique({ where: { id: data.odcId }, select: { oltId: true, ponPort: true } })
-        if (parentOdc) { data.oltId = parentOdc.oltId; data.ponPort = parentOdc.ponPort }
-      }
       // Inherit OLT/PON if uplinkOdpId changed
       if (data.uplinkOdpId && !data.oltId) {
         const parentOdp = await tx.odp.findUnique({ where: { id: data.uplinkOdpId }, select: { oltId: true, ponPort: true } })
@@ -463,7 +437,6 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
         where: { id: req.params.id },
         data,
         include: {
-          odc: { select: { id: true, name: true } },
           olt: { select: { id: true, name: true, ip: true } },
         },
       })
@@ -585,10 +558,6 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
         }
       }
 
-      // Sync both old and new ODC usedPorts
-      await syncOdcUsedPorts(old.odcId)
-      if (data.odcId && data.odcId !== old.odcId) await syncOdcUsedPorts(data.odcId)
-
       return odp
     })
 
@@ -604,7 +573,7 @@ router.delete('/:id', requireRole('ADMIN'), async (req, res, next) => {
   try {
     const odp = await prisma.odp.findUnique({ 
       where: { id: req.params.id }, 
-      select: { name: true, odcId: true, uplinkPort: true } 
+      select: { name: true, uplinkPort: true } 
     })
     if (!odp) return res.status(404).json({ error: 'ODP not found' })
 
@@ -651,7 +620,6 @@ router.delete('/:id', requireRole('ADMIN'), async (req, res, next) => {
       await tx.odp.delete({ where: { id: req.params.id } })
     })
 
-    await syncOdcUsedPorts(odp.odcId)
     res.status(204).end()
   } catch (e) { next(e) }
 })

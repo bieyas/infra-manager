@@ -84,7 +84,6 @@ model Device {
   alerts        Alert[]
   uplinks       DeviceLink[]   @relation("LinkUpstream")
   downlinks     DeviceLink[]   @relation("LinkDownstream")
-  odcs          Odc[]          @relation("OdcOlt")
   odps          Odp[]          @relation("OdpOlt")
   ipamHosts     Host[]
   pppoeSessions PppoeSession[]
@@ -360,77 +359,13 @@ model FtthNode {
 }
 
 enum FtthType {
-  ODC
   ODP
   CLOSURE
   HTB
 }
 
-// ── ODC (Optical Distribution Cabinet) ───────────────────────────────────────
-// First-level splitter box, fed from OLT PON port via feeder cable.
-// One ODC can fan out to many ODPs.
-
-model Odc {
-  id           String     @id @default(cuid())
-  name         String     @unique        // e.g. "ODC-RUNGKUT-01"
-  address      String?
-  lat          Float?
-  lng          Float?
-
-  // ── Upstream type: 'olt' or 'odc' ───────────────────────────────────────
-  uplinkType   String     @default("olt") // "olt" | "odc"
-
-  // ── Upstream from OLT ───────────────────────────────────────────────────
-  oltId        String?                   // FK → Device (type=OLT)
-  olt          Device?    @relation("OdcOlt", fields: [oltId], references: [id], onDelete: SetNull)
-  ponPort      String?                   // e.g. "PON1"
-
-  // ── Upstream from another ODC (cascade) ─────────────────────────────────
-  uplinkOdcId  String?                   // FK → Odc (self-relation)
-  uplinkOdc    Odc?       @relation("OdcCascade", fields: [uplinkOdcId], references: [id], onDelete: SetNull)
-  uplinkCore   String?                   // core used from upstream ODC
-  uplinkPort   String?                   // port from upstream ODC (format: "splitterId-portNumber")
-
-  // ── Downstream ODCs (reverse relation) ────────────────────────────────────
-  downlinkOdcs Odc[]      @relation("OdcCascade")
-
-  // ── Feeder cable (kabel masuk dari OLT/backbone) ─────────────────────────
-  feederLabel  String?                   // cable name / label
-  feederCores  Int?                      // total cores in feeder cable
-  feederCore   String?                   // which core used (e.g. "core-4 (biru)")
-
-  // ── Splitter System (NEW) ────────────────────────────────────────────────
-  splitters     SplitterInstance[]       @relation("OdcSplitters")
-  inputPower    Float?                   // dBm - measured/calculated input power
-  calculatedAt  DateTime?                // Last power calculation timestamp
-  
-  // ── Legacy fields (to be migrated) ───────────────────────────────────────
-  splitterRatio String?                  // OLD: "R1_2", "R1_4", etc - to be removed
-  usedPorts     Int        @default(0)   // OLD: auto-computed - replaced by SplitterPort count
-  passthrough   Int?                     // cores passed through without splitting
-
-  // ── Distribution cables out ───────────────────────────────────────────────
-  // Stored as JSON array: [{ label, coreCount, targetOdpId?, color }]
-  cablesOut     Json?
-
-  // ── Physical info ─────────────────────────────────────────────────────────
-  mountType    String?                   // "pole" | "wall" | "underground" | "aerial"
-  brand        String?
-  status       NodeStatus @default(ACTIVE)
-  installDate  DateTime?
-  pic          String?                   // technician in charge
-  notes        String?
-  photos       Json?                     // [{ url, caption }]
-
-  odps          Odp[]           @relation("OdpOdc")
-  coverageZones CoverageZone[]  @relation("OdcCoverageZones")
-
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-}
-
 // ── ODP (Optical Distribution Point) ─────────────────────────────────────────
-// Second-level (or further) splitter box, fed from ODC or another ODP.
+// Distribution splitter box, fed directly from OLT PON port or cascaded from another ODP.
 // Directly serves end-user ONUs.
 
 model Odp {
@@ -440,12 +375,8 @@ model Odp {
   lat          Float?
   lng          Float?
 
-  // ── Upstream type: 'odc' or 'odp' ───────────────────────────────────────
-  uplinkType   String     @default("odc") // "odc" | "odp"
-
-  // ── Upstream from ODC ───────────────────────────────────────────────────
-  odcId        String?
-  odc          Odc?       @relation("OdpOdc", fields: [odcId], references: [id], onDelete: SetNull)
+  // ── Upstream type: 'olt' (direct feeder) or 'odp' (cascade) ─────────────
+  uplinkType   String     @default("olt") // "olt" | "odp"
 
   // ── Upstream from another ODP (cascade) ─────────────────────────────────
   uplinkOdpId  String?
@@ -455,15 +386,15 @@ model Odp {
   // ── Downstream ODPs (reverse relation) ────────────────────────────────────
   downlinkOdps Odp[]      @relation("OdpCascade")
 
-  // ── Cascade upstream OLT/PON (denormalized for fast query) ───────────────
+  // ── Upstream from OLT (direct feeder cable) ──────────────────────────────
   oltId        String?
   olt          Device?    @relation("OdpOlt", fields: [oltId], references: [id], onDelete: SetNull)
   ponPort      String?
 
   // ── Uplink port (format: "splitterId-portNumber") ────────────────────────
-  uplinkPort   String?                   // port from upstream ODC/ODP splitter
+  uplinkPort   String?                   // port from upstream ODP splitter (if cascade)
 
-  // ── Feeder cable (masuk dari ODC/ODP upstream) ────────────────────────────
+  // ── Feeder cable (masuk dari OLT/ODP upstream) ────────────────────────────
   feederLabel  String?
   feederCores  Int?                      // total cores in feeder cable
   feederCore   String?                   // core used from feeder
@@ -658,13 +589,11 @@ model SplitterType {
   updatedAt         DateTime  @updatedAt
 }
 
-// Splitter Instance (actual splitter in ODC/ODP)
+// Splitter Instance (actual splitter in ODP)
 model SplitterInstance {
   id              String    @id @default(cuid())
   
-  parentType      String              // "ODC" | "ODP"
-  odcId           String?
-  odc             Odc?      @relation("OdcSplitters", fields: [odcId], references: [id], onDelete: Cascade)
+  parentType      String    @default("ODP")   // "ODP"
   odpId           String?
   odp             Odp?      @relation("OdpSplitters", fields: [odpId], references: [id], onDelete: Cascade)
   
@@ -685,7 +614,6 @@ model SplitterInstance {
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
   
-  @@index([odcId])
   @@index([odpId])
   @@index([splitterTypeId])
 }
@@ -707,7 +635,7 @@ model SplitterPort {
   attenuation       Float?
   
   // Connection
-  connectedToType   String?   // "ODP" | "ODC" | "CUSTOMER" | "SPLITTER"
+  connectedToType   String?   // "ODP" | "CUSTOMER" | "SPLITTER"
   connectedToId     String?
   connectionStatus  ConnectionStatus @default(AVAILABLE)
   
@@ -747,17 +675,17 @@ model SplitterConnection {
   updatedAt       DateTime  @updatedAt
 }
 
-// Fiber Link between nodes (ODC↔ODC, ODC↔ODP, ODP↔ODP)
+// Fiber Link between nodes (OLT↔ODP, ODP↔ODP)
 model FiberLink {
   id              String    @id @default(cuid())
   
   // Source
-  fromType        String    // "ODC" | "ODP"
+  fromType        String    // "OLT" | "ODP"
   fromId          String
   fromPort        Int?      // Optional port reference
   
   // Destination
-  toType          String    // "ODC" | "ODP"
+  toType          String    // "ODP"
   toId            String
   toPort          Int?      // Optional port reference
   
@@ -788,7 +716,7 @@ model FiberLink {
 model PowerReading {
   id              String    @id @default(cuid())
   
-  nodeType        String    // "ODC" | "ODP" | "CUSTOMER"
+  nodeType        String    // "ODP" | "CUSTOMER"
   nodeId          String
   
   pointType       String    // "INPUT" | "SPLITTER_INPUT" | "SPLITTER_OUTPUT" | "CUSTOMER_RX"
@@ -818,8 +746,8 @@ model PowerReading {
 model CascadeChangeLog {
   id            String    @id @default(cuid())
   
-  entityId      String    // ODC yang di-update
-  entityName    String    // Nama ODC
+  entityId      String    // ODP yang di-update
+  entityName    String    // Nama ODP
   cascadeLevel  Int       // Level depth (1 = direct child, 2 = grandchild, etc.)
   
   oldOltId      String?
@@ -867,12 +795,12 @@ model PortChangeLog {
   id              String    @id @default(cuid())
   
   // Entity being changed
-  entityType      String    // 'ODC' | 'ODP'
+  entityType      String    // 'ODP'
   entityId        String
   
   // Port information
-  oldPortInfo     Json?     // { splitterId, portNumber, odcName/odpName }
-  newPortInfo     Json?     // { splitterId, portNumber, odcName/odpName }
+  oldPortInfo     Json?     // { splitterId, portNumber, odpName }
+  newPortInfo     Json?     // { splitterId, portNumber, odpName }
   
   // Change details
   changeType      String    // 'CREATE' | 'UPDATE' | 'DELETE'
@@ -892,20 +820,16 @@ model PortChangeLog {
 
 // ── Coverage Zone ──────────────────────────────────────────────────────────────
 // Polygon area coverage yang digambar manual oleh admin di peta FTTH.
-// Bisa di-attach ke ODC tertentu (odcId) atau berdiri sendiri (zona kelurahan dll).
+// Berdiri sendiri (zona kelurahan dll).
 
 model CoverageZone {
   id          String    @id @default(cuid())
-  name        String                          // e.g. "Coverage ODC-RUNGKUT-01"
+  name        String                          // e.g. "Coverage Area Rungkut 01"
   description String?
 
   // GeoJSON polygon coordinates — disimpan sebagai JSON array [[lng,lat],...]
   // Format: array of rings, ring[0] = outer boundary, ring[1..] = holes
   coordinates Json                            // GeoJSON coordinates (Polygon rings)
-
-  // Opsional: attach ke ODC tertentu
-  odcId       String?
-  odc         Odc?      @relation("OdcCoverageZones", fields: [odcId], references: [id], onDelete: SetNull)
 
   // Visual styling
   color       String    @default("#06b6d4")   // hex color
@@ -920,7 +844,6 @@ model CoverageZone {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  @@index([odcId])
   @@index([isActive])
 }
 

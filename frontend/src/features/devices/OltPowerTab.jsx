@@ -55,7 +55,7 @@ function OltPowerTab({ deviceId, ponPorts }) {
 
       <p className="text-[10px] text-muted">
         Transmit Power (dBm) dari SFP transceiver pada setiap port PON OLT.
-        Nilai ini digunakan sebagai power input pada ODC.
+        Nilai ini digunakan sebagai power input pada ODP.
       </p>
 
       {/* Content */}

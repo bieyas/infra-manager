@@ -56,25 +56,11 @@ export function useOsrmRouting(nodes, enabled = true, debounceMs = 800) {
     const edges = []
 
     nodes.forEach(n => {
-      // OLT → ODC
-      if (n.type === 'odc' && n.oltId) {
+      // OLT → ODP direct
+      if (n.type === 'odp' && !n.uplinkOdpId && n.oltId) {
         const olt = nodeMap.get(n.oltId)
         if (olt?.lat && olt?.lng && n.lat && n.lng) {
           edges.push({ key: `${olt.id}-${n.id}`, from: olt, to: n })
-        }
-      }
-      // ODC cascade
-      if (n.type === 'odc' && n.uplinkOdcId) {
-        const uplink = nodeMap.get(n.uplinkOdcId)
-        if (uplink?.lat && uplink?.lng && n.lat && n.lng) {
-          edges.push({ key: `${uplink.id}-${n.id}`, from: uplink, to: n })
-        }
-      }
-      // ODC → ODP
-      if (n.type === 'odp' && n.odcId) {
-        const odc = nodeMap.get(n.odcId)
-        if (odc?.lat && odc?.lng && n.lat && n.lng) {
-          edges.push({ key: `${odc.id}-${n.id}`, from: odc, to: n })
         }
       }
       // ODP cascade

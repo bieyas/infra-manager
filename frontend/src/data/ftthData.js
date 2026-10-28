@@ -27,57 +27,7 @@ function makeCore(total) {
   }))
 }
 
-// ─── ODC ────────────────────────────────────────────────────────────────────
-export const ODC_LIST = [
-  {
-    id: 'ODC-001',
-    name: 'ODC-001 Pusat',
-    type: 'odc',
-    parentId: null,
-    cableCore: 96,
-    cores: makeCore(96),
-    lat: -7.2575,
-    lng: 112.7521,
-    address: 'Jl. Ahmad Yani No.1, Surabaya',
-    brand: 'Optix',
-    model: 'ODC-96C',
-    installDate: '2023-03-15',
-    notes: 'ODC utama ring backbone barat',
-    status: 'active',
-  },
-  {
-    id: 'ODC-002',
-    name: 'ODC-002 Timur',
-    type: 'odc',
-    parentId: 'ODC-001',
-    cableCore: 48,
-    cores: makeCore(48),
-    lat: -7.2610,
-    lng: 112.7580,
-    address: 'Jl. Raya Darmo No.45, Surabaya',
-    brand: 'FiberHome',
-    model: 'ODC-48C',
-    installDate: '2023-06-20',
-    notes: 'Downline dari ODC-001',
-    status: 'active',
-  },
-  {
-    id: 'ODC-003',
-    name: 'ODC-003 Barat',
-    type: 'odc',
-    parentId: 'ODC-001',
-    cableCore: 24,
-    cores: makeCore(24),
-    lat: -7.2540,
-    lng: 112.7470,
-    address: 'Jl. Basuki Rahmat No.12, Surabaya',
-    brand: 'Optix',
-    model: 'ODC-24C',
-    installDate: '2023-08-10',
-    notes: '',
-    status: 'active',
-  },
-]
+export const ODC_LIST = []
 
 // ─── ODP ────────────────────────────────────────────────────────────────────
 export const ODP_LIST = [
@@ -85,7 +35,7 @@ export const ODP_LIST = [
     id: 'ODP-001-01',
     name: 'ODP-001-01',
     type: 'odp',
-    parentId: 'ODC-001',
+    parentId: null,
     cableCore: 8,
     cores: makeCore(8),
     lat: -7.2590,
@@ -103,7 +53,7 @@ export const ODP_LIST = [
     id: 'ODP-001-02',
     name: 'ODP-001-02',
     type: 'odp',
-    parentId: 'ODC-001',
+    parentId: null,
     cableCore: 8,
     cores: makeCore(8),
     lat: -7.2565,
@@ -121,7 +71,7 @@ export const ODP_LIST = [
     id: 'ODP-002-01',
     name: 'ODP-002-01',
     type: 'odp',
-    parentId: 'ODC-002',
+    parentId: null,
     cableCore: 8,
     cores: makeCore(8),
     lat: -7.2625,
@@ -139,7 +89,7 @@ export const ODP_LIST = [
     id: 'ODP-003-01',
     name: 'ODP-003-01',
     type: 'odp',
-    parentId: 'ODC-003',
+    parentId: null,
     cableCore: 4,
     cores: makeCore(4),
     lat: -7.2548,
@@ -161,7 +111,7 @@ export const CLOSURE_LIST = [
     id: 'CLO-001',
     name: 'Closure-001',
     type: 'closure',
-    parentId: 'ODC-001',
+    parentId: null,
     cableCore: 24,
     cores: makeCore(24),
     lat: -7.2558,
@@ -170,7 +120,7 @@ export const CLOSURE_LIST = [
     brand: 'Corning',
     model: 'FOSC-400',
     installDate: '2023-07-18',
-    notes: 'Splice di tiang sebelum ODC-002',
+    notes: 'Splice di tiang',
     status: 'active',
     mountType: 'aerial', // aerial | underground | wall
   },
@@ -178,7 +128,7 @@ export const CLOSURE_LIST = [
     id: 'CLO-002',
     name: 'Closure-002',
     type: 'closure',
-    parentId: 'ODC-002',
+    parentId: null,
     cableCore: 12,
     cores: makeCore(12),
     lat: -7.2618,
@@ -253,7 +203,6 @@ export const HTB_LIST = [
 
 // ─── Combined helper ─────────────────────────────────────────────────────────
 export const ALL_FTTH = [
-  ...ODC_LIST.map(o => ({ ...o, type: 'odc' })),
   ...ODP_LIST.map(o => ({ ...o, type: 'odp' })),
   ...CLOSURE_LIST.map(o => ({ ...o, type: 'closure' })),
   ...HTB_LIST.map(o => ({ ...o, type: 'htb' })),

@@ -39,7 +39,7 @@ export default function OdpDetail({ odpId, onClose, onEdit, onDelete, onNavigate
   const navigate = useNavigate()
   const [history,   setHistory]   = useState([])
   const [printOpen,  setPrintOpen]  = useState(false)
-  const [printPort,  setPrintPort]  = useState(null)  // null = ODC/ODP label, number = port label
+  const [printPort,  setPrintPort]  = useState(null)  // null = ODP label, number = port label
   const { odp, loading, error } = useOdpDetail(odpId)
 
   const openPortPrint = useCallback((portNum) => {
@@ -182,14 +182,6 @@ export default function OdpDetail({ odpId, onClose, onEdit, onDelete, onNavigate
                   <span className="px-2 py-0.5 rounded-full border border-[var(--border)] text-muted">OLT belum diset</span>
                 )}
                 <ChevronRight size={10} className="text-muted" />
-                {odp.odc && (
-                  <>
-                    <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                      <Box size={9} /> {odp.odc.name}
-                    </span>
-                    <ChevronRight size={10} className="text-muted" />
-                  </>
-                )}
                 {odp.uplinkOdp && (
                   <>
                     <span className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20">

@@ -1,7 +1,7 @@
 import React from 'react'
 import { Plus, Box, MapPin } from 'lucide-react'
 
-export default function MapContextMenu({ x, y, latlng, onAddOdc, onAddOdp, onClose }) {
+export default function MapContextMenu({ x, y, latlng, onAddOdp, onClose }) {
   if (!latlng) return null
 
   return (
@@ -26,19 +26,6 @@ export default function MapContextMenu({ x, y, latlng, onAddOdc, onAddOdp, onClo
             {latlng.lat.toFixed(6)}, {latlng.lng.toFixed(6)}
           </p>
         </div>
-        
-        <button
-          onClick={() => { onAddOdc(); onClose() }}
-          className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-[var(--bg-primary)] transition-colors text-left"
-        >
-          <div className="p-1.5 rounded bg-blue-500/10 text-blue-400">
-            <Box size={14} />
-          </div>
-          <div>
-            <p className="text-xs font-medium text-primary">Tambah ODC</p>
-            <p className="text-[10px] text-muted">Distribution Closure</p>
-          </div>
-        </button>
         
         <button
           onClick={() => { onAddOdp(); onClose() }}

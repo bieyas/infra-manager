@@ -8,7 +8,7 @@ const FIBER_LOSS_PER_KM = 0.35 // dB/km at 1490nm
 const CONNECTOR_LOSS = 0.5 // dB per connector
 
 /**
- * SplitterManager - Component untuk mengelola multiple splitters dalam satu box ODC/ODP
+ * SplitterManager - Component untuk mengelola multiple splitters dalam satu box ODP
  * 
  * Features:
  * - Tambah/hapus multiple splitters (simetris & asimetris)
@@ -20,7 +20,7 @@ export function SplitterManager({
   splitters = [], 
   onChange, 
   inputPower = null,
-  parentType = 'ODC', // 'ODC' | 'ODP'
+  parentType = 'ODP',
   availableOutputs = [], // List of available downstream nodes for connection
   readOnly = false 
 }) {
@@ -113,8 +113,7 @@ export function SplitterManager({
         const backendPort = splitter.ports?.find(p => p.portNumber === portNum)
         const isConnected = backendPort?.connectionStatus === 'CONNECTED'
         const connectedToName = isConnected ? 
-          (backendPort.connectedToType === 'ODC' ? 'ODC' : 
-           backendPort.connectedToType === 'ODP' ? 'ODP' : 'Device') : null
+          (backendPort.connectedToType === 'ODP' ? 'ODP' : 'Device') : null
 
         return {
           portNumber: portNum,

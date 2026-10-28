@@ -43,7 +43,6 @@ const NAV_TOP = [
 
 const NAV_FTTH = [
   { label: 'Peta FTTH',    to: '/ftth',       icon: Map },
-  { label: 'ODC',          to: '/odc',        icon: Box },
   { label: 'ODP',          to: '/odp',        icon: Cable },
 ]
 
@@ -100,7 +99,7 @@ export default function Sidebar({ collapsed }) {
   const { user } = useAuth()
   const isAdmin = user?.role === 'ADMIN'
   const location = useLocation()
-  const ftthActive = ['/ftth','/odc','/odp','/customers'].some(p => location.pathname.startsWith(p))
+  const ftthActive = ['/ftth','/odp','/customers'].some(p => location.pathname.startsWith(p))
   const [ftthOpen, setFtthOpen] = useState(ftthActive)
 
   // Filter nav items by user permissions

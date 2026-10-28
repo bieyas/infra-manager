@@ -85,7 +85,7 @@ router.get('/', async (req, res, next) => {
     void triggerCustomerSync().catch(error => {
       console.error(`[customer-sync] ${error.message}`)
     })
-    const { q, status, connectionStatus, odpId, odcId, page = '1', limit = '50' } = req.query
+    const { q, status, connectionStatus, odpId, page = '1', limit = '50' } = req.query
     const take = Math.min(parseInt(limit) || 50, 200)
     const skip = (Math.max(parseInt(page) || 1, 1) - 1) * take
 
@@ -93,7 +93,6 @@ router.get('/', async (req, res, next) => {
     if (status) where.serviceStatus = status.toUpperCase()
     if (connectionStatus) where.connectionStatus = connectionStatus.toUpperCase()
     if (odpId)  where.odpId = odpId
-    if (odcId)  where.odp = { odcId }
     if (q) {
       where.OR = [
         { name:          { contains: q, mode: 'insensitive' } },
@@ -109,7 +108,7 @@ router.get('/', async (req, res, next) => {
       prisma.customer.findMany({
         where,
         include: {
-          odp: { select: { id: true, name: true, odcId: true, odc: { select: { id: true, name: true } } } },
+          odp: { select: { id: true, name: true } },
           sourceDevice: { select: { id: true, name: true } },
         },
         orderBy: { name: 'asc' },
@@ -178,7 +177,6 @@ router.get('/:id', async (req, res, next) => {
       include: {
         odp: {
           include: {
-            odc: { select: { id: true, name: true } },
             olt: { select: { id: true, name: true } },
           },
         },

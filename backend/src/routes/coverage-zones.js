@@ -32,14 +32,12 @@ function calcAreaM2(coordinates) {
 // GET /api/coverage-zones — list semua zona aktif
 router.get('/', async (req, res) => {
   try {
-    const { odcId, all } = req.query
+    const { all } = req.query
     const where = {}
     if (all !== 'true') where.isActive = true
-    if (odcId) where.odcId = odcId
 
     const zones = await prisma.coverageZone.findMany({
       where,
-      include: { odc: { select: { id: true, name: true } } },
       orderBy: { createdAt: 'desc' },
     })
     res.json(zones)
@@ -53,7 +51,6 @@ router.get('/:id', async (req, res) => {
   try {
     const zone = await prisma.coverageZone.findUnique({
       where: { id: req.params.id },
-      include: { odc: { select: { id: true, name: true } } },
     })
     if (!zone) return res.status(404).json({ error: 'Not found' })
     res.json(zone)
@@ -65,7 +62,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/coverage-zones — buat zona baru
 router.post('/', async (req, res) => {
   try {
-    const { name, description, coordinates, odcId, color, opacity, label } = req.body
+    const { name, description, coordinates, color, opacity, label } = req.body
     if (!name || !coordinates) {
       return res.status(400).json({ error: 'name dan coordinates wajib diisi' })
     }
@@ -77,14 +74,12 @@ router.post('/', async (req, res) => {
         name,
         description: description || null,
         coordinates,
-        odcId: odcId || null,
         color: color || '#06b6d4',
         opacity: opacity != null ? parseFloat(opacity) : 0.2,
         label: label || null,
         areaM2,
         createdBy: req.user?.id || null,
       },
-      include: { odc: { select: { id: true, name: true } } },
     })
     res.status(201).json(zone)
   } catch (err) {
@@ -95,12 +90,11 @@ router.post('/', async (req, res) => {
 // PATCH /api/coverage-zones/:id — update
 router.patch('/:id', async (req, res) => {
   try {
-    const { name, description, coordinates, odcId, color, opacity, label, isActive } = req.body
+    const { name, description, coordinates, color, opacity, label, isActive } = req.body
     const data = {}
 
     if (name !== undefined)        data.name        = name
     if (description !== undefined) data.description = description
-    if (odcId !== undefined)       data.odcId       = odcId || null
     if (color !== undefined)       data.color       = color
     if (opacity !== undefined)     data.opacity     = parseFloat(opacity)
     if (label !== undefined)       data.label       = label
@@ -114,7 +108,6 @@ router.patch('/:id', async (req, res) => {
     const zone = await prisma.coverageZone.update({
       where: { id: req.params.id },
       data,
-      include: { odc: { select: { id: true, name: true } } },
     })
     res.json(zone)
   } catch (err) {
