@@ -31,10 +31,13 @@ const Users = lazy(() => import('./pages/Users'))
 const UserDetail = lazy(() => import('./pages/UserDetail'))
 const OdpPage = lazy(() => import('./features/distribution/OdpPage'))
 const OdpFormPage = lazy(() => import('./features/distribution/OdpFormPage'))
+const HtbPage = lazy(() => import('./features/htb/HtbPage'))
+const HtbFormPage = lazy(() => import('./features/htb/HtbFormPage'))
 const QrScanPage      = lazy(() => import('./pages/QrScanPage'))
 const CustomerPage    = lazy(() => import('./features/customers/CustomerPage'))
 const HelpdeskPage    = lazy(() => import('./features/helpdesk/HelpdeskPage'))
 const CustomerForm    = lazy(() => import('./features/customers/CustomerForm'))
+const AccelPppPage    = lazy(() => import('./features/accel-ppp/AccelPppPage'))
 
 export default function App() {
   return (
@@ -63,6 +66,9 @@ export default function App() {
               <Route path="/odp"           element={<OdpPage />} />
               <Route path="/odp/new"        element={<MapSettingsProvider><OdpFormPage /></MapSettingsProvider>} />
               <Route path="/odp/:id/edit"   element={<MapSettingsProvider><OdpFormPage /></MapSettingsProvider>} />
+              <Route path="/htb"           element={<HtbPage />} />
+              <Route path="/htb/new"        element={<MapSettingsProvider><HtbFormPage /></MapSettingsProvider>} />
+              <Route path="/htb/:id/edit"   element={<MapSettingsProvider><HtbFormPage /></MapSettingsProvider>} />
               <Route path="/ipam"       element={<Ipam />} />
               <Route path="/settings"   element={<MapSettingsProvider><Settings /></MapSettingsProvider>} />
               <Route path="/users"           element={<Users />} />
@@ -71,6 +77,7 @@ export default function App() {
               <Route path="/helpdesk"         element={<HelpdeskPage />} />
               <Route path="/customers/new"    element={<CustomerForm />} />
               <Route path="/customers/:id/edit" element={<CustomerForm />} />
+              <Route path="/accel-ppp" element={<AccelPppPage />} />
               <Route path="*"           element={<NotFound />} />
             </Route>
           </Routes>

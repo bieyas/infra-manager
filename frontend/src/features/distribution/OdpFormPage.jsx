@@ -136,7 +136,7 @@ function PortDropdown({ ports, value, onChange, disabled, placeholder, isEdit })
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
-  const selectedPort = ports.find(p => p.number.toString() === value?.toString())
+  const selectedPort = ports.find(p => (p.key && p.key === value) || p.number?.toString() === value?.toString())
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -156,11 +156,24 @@ function PortDropdown({ ports, value, onChange, disabled, placeholder, isEdit })
         onClick={() => setOpen(!open)}
         className={`${IC} flex items-center justify-between text-left ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
-        <span className="flex items-center gap-2">
+        <span className="flex items-center gap-2 flex-wrap">
           {selectedPort ? (
             <>
               <span className={`w-2 h-2 rounded-full shrink-0 ${selectedPort.connected ? 'bg-amber-400' : 'bg-emerald-400'}`} />
-              <span className="text-primary">Port {selectedPort.number}</span>
+              <span className="text-primary font-medium">Port {selectedPort.number}</span>
+              {selectedPort.splitterName && (
+                <span className="text-[11px] text-muted">[{selectedPort.splitterName}]</span>
+              )}
+              {selectedPort.portType === 'PASS_THROUGH' && (
+                <span className="text-[10px] bg-purple-500/20 text-purple-400 font-semibold px-1.5 py-0.5 rounded border border-purple-500/30">
+                  PASS / Feeder Out
+                </span>
+              )}
+              {selectedPort.portType === 'DROP' && (
+                <span className="text-[10px] bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded border border-blue-500/30">
+                  DROP / Lokal
+                </span>
+              )}
               {selectedPort.power !== null && selectedPort.power !== undefined && (
                 <span className="text-xs text-muted">({selectedPort.power} dBm)</span>
               )}
@@ -174,31 +187,44 @@ function PortDropdown({ ports, value, onChange, disabled, placeholder, isEdit })
             <span className="text-muted">{placeholder}</span>
           )}
         </span>
-        <ChevronDown size={14} className="text-muted" />
+        <ChevronDown size={14} className="text-muted shrink-0" />
       </button>
 
       {open && (
         <div className="absolute z-20 w-full mt-1 bg-[var(--bg-card)] border border-[var(--border)] rounded-lg shadow-lg overflow-hidden max-h-60 overflow-y-auto">
           {ports.map(p => {
-            const isCurrentSelected = p.number.toString() === value?.toString()
+            const isCurrentSelected = (p.key && p.key === value) || p.number?.toString() === value?.toString()
             const canSelect = !p.connected || isCurrentSelected || isEdit
 
             return (
               <button
-                key={p.number}
+                key={p.key || p.number}
                 type="button"
                 disabled={!canSelect}
                 onClick={() => {
-                  onChange(p.number.toString())
+                  onChange(p.key || p.number.toString())
                   setOpen(false)
                 }}
                 className={`w-full px-3 py-2 text-sm flex items-center justify-between hover:bg-[var(--accent-glow)]/20 transition-colors text-left ${
                   !canSelect ? 'opacity-40 cursor-not-allowed bg-muted/20' : ''
                 }`}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className={`w-2 h-2 rounded-full shrink-0 ${p.connected ? 'bg-amber-400' : 'bg-emerald-400'}`} />
-                  <span className="text-primary">Port {p.number}</span>
+                  <span className="text-primary font-medium">Port {p.number}</span>
+                  {p.splitterName && (
+                    <span className="text-[11px] text-muted">[{p.splitterName}]</span>
+                  )}
+                  {p.portType === 'PASS_THROUGH' && (
+                    <span className="text-[10px] bg-purple-500/20 text-purple-400 font-semibold px-1.5 py-0.5 rounded border border-purple-500/30">
+                      PASS / Feeder Out
+                    </span>
+                  )}
+                  {p.portType === 'DROP' && (
+                    <span className="text-[10px] bg-blue-500/20 text-blue-400 font-semibold px-1.5 py-0.5 rounded border border-blue-500/30">
+                      DROP / Lokal
+                    </span>
+                  )}
                   {p.power !== null && p.power !== undefined && (
                     <span className="text-xs text-muted">({p.power} dBm)</span>
                   )}
@@ -208,7 +234,7 @@ function PortDropdown({ ports, value, onChange, disabled, placeholder, isEdit })
                     </span>
                   )}
                 </div>
-                {isCurrentSelected && <Check size={14} className="text-[var(--accent)]" />}
+                {isCurrentSelected && <Check size={14} className="text-[var(--accent)] shrink-0" />}
               </button>
             )
           })}
@@ -268,7 +294,8 @@ export default function OdpFormPage() {
     if (form.uplinkType !== 'odp' || !selectedOdpDetail?.splitters) return []
     const ports = []
     selectedOdpDetail.splitters.forEach(splitter => {
-      (splitter.ports || []).forEach(port => {
+      const sName = splitter.name || splitter.type?.name || `Splitter ${splitter.sequenceOrder ?? 1}`
+      ;(splitter.ports || []).forEach(port => {
         if (port.connectionStatus === 'AVAILABLE' || port.connectionStatus === 'CONNECTED') {
           let connectedName = null
           if (port.connectionStatus === 'CONNECTED') {
@@ -280,7 +307,11 @@ export default function OdpFormPage() {
             }
           }
           ports.push({
+            id: port.id,
+            key: `${splitter.id}-${port.portNumber}`,
             number: port.portNumber,
+            splitterName: sName,
+            portType: port.portType, // 'DROP', 'PASS_THROUGH', 'OUTPUT'
             power: port.outputPower,
             connected: port.connectionStatus === 'CONNECTED',
             connectedTo: connectedName,
@@ -297,7 +328,7 @@ export default function OdpFormPage() {
     
     let sourcePower = null
     if (form.uplinkType === 'odp') {
-      const port = upstreamPorts.find(p => p.number.toString() === form.uplinkPort?.toString())
+      const port = upstreamPorts.find(p => p.key === form.uplinkPort || p.number?.toString() === form.uplinkPort?.toString())
       sourcePower = port?.power
     }
     
@@ -391,7 +422,23 @@ export default function OdpFormPage() {
         feederCores: odp.feederCores ?? '',
         feederCore: odp.feederCore ?? '',
         feederPass: odp.feederPass ?? '',
-        splitters: odp.splitters ?? [],
+        splitters: (odp.splitters && odp.splitters.length > 0) ? odp.splitters : (odp.splitterRatio ? [{
+          id: `legacy-${Date.now()}`,
+          splitterTypeId: `1:${odp.splitterRatio.replace('R1_', '')}`,
+          sequenceOrder: 1,
+          position: 'Slot A',
+          portMappings: [],
+          inputPower: odp.inputPower != null ? Number(odp.inputPower) : null,
+          outputs: parseInt(odp.splitterRatio.replace('R1_', ''), 10) || 8,
+          type: {
+            id: `1:${odp.splitterRatio.replace('R1_', '')}`,
+            code: `1:${odp.splitterRatio.replace('R1_', '')}`,
+            name: `PLC 1:${odp.splitterRatio.replace('R1_', '')}`,
+            category: 'SYMMETRIC',
+            outputCount: parseInt(odp.splitterRatio.replace('R1_', ''), 10) || 8,
+            attEqual: parseFloat((3.5 + 10 * Math.log10(parseInt(odp.splitterRatio.replace('R1_', ''), 10) || 8)).toFixed(1)),
+          }
+        }] : []),
         inputPower: odp.inputPower ?? '',
         fiberLength: odp.fiberLength ?? '',
         splitterRatio: odp.splitterRatio ?? settings?.defaultOdpSplitter ?? 'R1_8',
@@ -787,7 +834,16 @@ export default function OdpFormPage() {
         <Section title="Konfigurasi Splitter">
           <SplitterManager
             splitters={form.splitters}
-            onChange={splitters => set('splitters', splitters)}
+            onChange={newSplitters => {
+              set('splitters', newSplitters)
+              const sym = newSplitters.find(s => s.category === 'SYMMETRIC' || s.type?.category === 'SYMMETRIC')
+              if (sym) {
+                const count = sym.outputs || sym.type?.outputCount || 8
+                set('splitterRatio', `R1_${count}`)
+              }
+            }}
+            inputPower={form.inputPower !== '' && form.inputPower !== null ? Number(form.inputPower) : null}
+            customers={odp?.customers?.length ? odp.customers : connectedCustomers}
             legacySplitterRatio={form.splitterRatio}
             onLegacyChange={ratio => set('splitterRatio', ratio)}
           />

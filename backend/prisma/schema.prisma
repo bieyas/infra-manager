@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-1.1.x", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -468,6 +469,18 @@ model Customer {
   splitterPortId  String?                   // Connect to specific SplitterPort
   splitterPort    SplitterPort?  @relation(fields: [splitterPortId], references: [id])
 
+  // ── HTB Connection ────────────────────────────────────────────────────────
+  distributionType String?                   @default("ODP") // "ODP" | "HTB"
+  htbBoxId         String?
+  htbBox           HtbBox?                   @relation("CustomerHtbBox", fields: [htbBoxId], references: [id], onDelete: SetNull)
+  htbPortId        String?
+  htbPort          HtbPort?                  @relation(fields: [htbPortId], references: [id], onDelete: SetNull)
+  cpeType          String?                   // "ROUTER_WIFI" | "ONU" | "HTB_SINGLE" | "DIRECT_PC"
+
+  // ── HTB Reverse Roles ─────────────────────────────────────────────────────
+  hostedHtbBoxes   HtbBox[]                  @relation("HtbPowerHost")
+  bridgedHtbBoxes  HtbBox[]                  @relation("HtbUplinkCustomer")
+
   // ── ONU device ───────────────────────────────────────────────────────────
   onuSn           String?    @unique        // ONU serial number (from OLT)
   onuIndex        String?                   // OLT index e.g. "1/1/1:5"
@@ -853,4 +866,129 @@ model RemoteOnuSetting {
   natIngressInterface String?
   natSourceCidr      String?
   updatedAt          DateTime @updatedAt
+}
+
+// ── HTB (Active Ethernet Distribution) ─────────────────────────────────────────
+
+model HtbBox {
+  id               String         @id @default(cuid())
+  name             String         @unique        // e.g. "HTB-TIANG-04" atau "HTB-RMH-UNYIL"
+  code             String?        @unique        // Barcode / QR Code / Short Code
+  address          String?
+  lat              Float?
+  lng              Float?
+
+  // Model & Form Factor
+  modelType        HtbModelType   @default(SWITCH_3FO_2LAN)
+  foVariant        String?                       // e.g. "ABB", "AAB", "AAABBB", "A", "B"
+  mountType        String?        @default("POLE") // "POLE" | "WALL" | "HOUSE"
+
+  // Kelistrikan / Power Source
+  powerSource      HtbPowerSource @default(HOST_CUSTOMER_PLN)
+  hostCustomerId   String?
+  hostCustomer     Customer?      @relation("HtbPowerHost", fields: [hostCustomerId], references: [id], onDelete: SetNull)
+  hasUpsBattery    Boolean        @default(false)
+  powerNotes       String?                       // e.g. "Colok di teras rumah Unyil"
+
+  // Jalur Uplink (Internet Masuk)
+  uplinkType       HtbUplinkType  @default(CUSTOMER_ONU)
+  // 1. Jika Uplink dari Box HTB lain (Estafet)
+  uplinkHtbId      String?
+  uplinkHtb        HtbBox?        @relation("HtbCascade", fields: [uplinkHtbId], references: [id], onDelete: SetNull)
+  downlinkBoxes    HtbBox[]       @relation("HtbCascade")
+  uplinkPortLabel  String?                       // e.g. "FO-2 (B)" di upstream box
+  // 2. Jika Uplink dari Bridge ONU Pelanggan (ODP ➔ ONU Unyil)
+  uplinkCustomerId String?
+  uplinkCustomer   Customer?      @relation("HtbUplinkCustomer", fields: [uplinkCustomerId], references: [id], onDelete: SetNull)
+  uplinkOnuPort    String?                       // e.g. "LAN 1" / "LAN 2 (Bridge)"
+  // Kabel fisik uplink
+  fiberLength      Float?                        // meters
+  cableLabel       String?                       // e.g. "DC 1C Biru" / "UTP Cat6 Outdoor"
+
+  // Status & Port Relations
+  status           NodeStatus     @default(ACTIVE)
+  notes            String?
+
+  ports            HtbPort[]
+  customers        Customer[]     @relation("CustomerHtbBox")
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([uplinkHtbId])
+  @@index([uplinkCustomerId])
+  @@index([hostCustomerId])
+}
+
+model HtbPort {
+  id              String           @id @default(cuid())
+  htbBoxId        String
+  htbBox          HtbBox           @relation(fields: [htbBoxId], references: [id], onDelete: Cascade)
+
+  portType        HtbPortType                    // FO | LAN
+  portIndex       Int                            // 1, 2, 3...
+  label           String                         // e.g. "FO-1 (A)", "FO-2 (B)", "LAN-1"
+
+  // Spesifik FO
+  wavelength      String?                        // "1310" (Side A) | "1550" (Side B) | null
+
+  // Spesifik LAN
+  isReversePoe    Boolean          @default(false) // Menerima power reverse PoE
+
+  // Peran Port
+  role            HtbPortRole      @default(UNUSED)
+  status          ConnectionStatus @default(AVAILABLE) // AVAILABLE | CONNECTED | RESERVED | FAULTY
+
+  // Relasi Koneksi
+  connectedToType String           @default("NONE") // "NONE" | "CUSTOMER" | "HTB_BOX" | "ONU_UPLINK"
+
+  // Jika tersambung ke Pelanggan
+  customers       Customer[]
+
+  // Jika tersambung untuk Estafet ke Box HTB Lain (Downlink Cascade)
+  targetHtbId     String?                        // ID downstream HtbBox
+  targetPortLabel String?                        // Label port di downstream box
+
+  notes           String?
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@unique([htbBoxId, portIndex, portType])
+  @@index([htbBoxId])
+  @@index([targetHtbId])
+}
+
+enum HtbModelType {
+  SINGLE_1FO_1LAN
+  SWITCH_3FO_2LAN
+  SWITCH_6FO_2LAN
+  CUSTOM
+}
+
+enum HtbPortType {
+  FO
+  LAN
+}
+
+enum HtbPortRole {
+  UPLINK
+  CASCADE
+  CUSTOMER
+  LOCAL_AP
+  UNUSED
+}
+
+enum HtbPowerSource {
+  PLN_DEDICATED
+  HOST_CUSTOMER_PLN
+  REVERSE_POE
+  CENTRAL_DC_UPS
+  SOLAR
+}
+
+enum HtbUplinkType {
+  CORE_SWITCH
+  HTB
+  CUSTOMER_ONU
 }

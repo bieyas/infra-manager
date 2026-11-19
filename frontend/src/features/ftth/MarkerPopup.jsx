@@ -117,7 +117,7 @@ export default function MarkerPopup({ node, onDetail, onEdit, onClose, onNavigat
     : node.type === 'onu'               ? `/customers/${node.id}/edit`
     : null
 
-  const detailPath = node.type === 'odp'                 ? `/odp/${node.id}/edit`
+  const detailPath = node.type === 'odp'                 ? `/odp/${node.id}`
     : node.type === 'olt'                 ? `/devices/${node.id}`
     : node.type === 'onu'                 ? `/customers`
     : null

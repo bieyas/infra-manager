@@ -25,6 +25,7 @@ export const ROUTE_PERMISSION_MAP = {
   '/helpdesk':    'helpdesk',
   '/settings':    'settings',
   '/users':       'user_mgmt',
+  '/accel-ppp':   'accel_ppp',
 }
 
 // Sidebar nav items also need permission keys
@@ -46,6 +47,7 @@ export const NAV_PERMISSION_MAP = {
   '/customers':   'customers',
   '/settings':    'settings',
   '/users':       'user_mgmt',
+  '/accel-ppp':   'accel_ppp',
 }
 
 /**

@@ -377,39 +377,214 @@ export default function OdpDetail({ odpId, onClose, onEdit, onDelete, onNavigate
                 )}
               </div>
 
-              {capacity === 0 ? (
+              {capacity === 0 && (!odp.splitters || odp.splitters.length === 0) ? (
                 <div className="py-6 text-center rounded-xl border border-dashed border-[var(--border)]">
                   <Signal size={20} className="text-muted mx-auto mb-2 opacity-40" />
                   <p className="text-[10px] text-muted">Splitter belum dikonfigurasi</p>
                   <p className="text-[9px] text-muted opacity-60 mt-0.5">Set splitter ratio atau tambah splitter di form edit</p>
                 </div>
+              ) : odp.splitters && odp.splitters.length > 0 ? (
+                <div className="space-y-3">
+                  {odp.splitters.map((splitter, sIdx) => {
+                    const isAsym = splitter.splitterType?.category === "ASYMMETRIC"
+                    const ports = splitter.ports || []
+                    const usedCount = ports.filter(p => p.connectionStatus === "CONNECTED").length
+                    return (
+                      <div key={splitter.id} className="p-3 rounded-xl bg-[var(--bg-secondary)]/50 border border-[var(--border)] space-y-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-primary">
+                              {splitter.splitterType?.name || `Splitter ${sIdx + 1}`}
+                            </span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-semibold border ${
+                              isAsym ? "bg-purple-500/10 text-purple-400 border-purple-500/30" : "bg-blue-500/10 text-blue-400 border-blue-500/30"
+                            }`}>
+                              {isAsym ? "FBT Asimetris" : "PLC Simetris"}
+                            </span>
+                            {splitter.position && (
+                              <span className="text-[10px] text-muted bg-[var(--bg-card)] px-1.5 py-0.5 rounded border border-[var(--border)]">
+                                {splitter.position}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-muted font-medium">
+                            {usedCount}/{ports.length} terpakai
+                          </span>
+                        </div>
+
+                        <div className="grid gap-2" style={{
+                          gridTemplateColumns: `repeat(${ports.length <= 4 ? ports.length : ports.length <= 8 ? ports.length : 8}, 1fr)`
+                        }}>
+                          {ports.map((p) => {
+                            const isSplitterUplink = p.connectedToType === 'SPLITTER'
+                            const cust = (odp.customers || []).find(c => 
+                              c.splitterPortId === p.id || 
+                              p.connectedToId === c.id ||
+                              (!c.splitterPortId && String(c.odpPort) === String(p.portNumber) && (!isAsym || odp.splitters.length === 1))
+                            )
+                            const childOdp = (odp.downlinkOdps || []).find(d => 
+                              p.connectedToId === d.id ||
+                              d.uplinkPort === p.id ||
+                              d.uplinkPort === `${splitter.id}-${p.portNumber}` || 
+                              d.uplinkPort === `${splitter.id}:${p.portNumber}` ||
+                              d.uplinkPort === String(p.portNumber)
+                            )
+                            const isOdpDownlink = !!childOdp || (p.connectionStatus === "CONNECTED" && p.connectedToType === "ODP")
+                            const isCustConnected = !!cust || (p.connectionStatus === "CONNECTED" && p.connectedToType === "CUSTOMER")
+                            const isOccupied = isSplitterUplink || isCustConnected || isOdpDownlink || p.connectionStatus === "CONNECTED"
+                            const isPass = p.portType === "PASS_THROUGH"
+
+                            return (
+                              <div key={p.id} className="relative group">
+                                <div
+                                  title={
+                                    isSplitterUplink
+                                      ? `Port ${p.portNumber} (Drop): Internal Feeder Spliced ke Splitter berikutnya${p.outputPower !== null ? ` | ${p.outputPower} dBm` : ''}`
+                                      : cust 
+                                      ? `Port ${p.portNumber}: Pelanggan ${cust.name} (${cust.serviceStatus || "ACTIVE"})${p.outputPower !== null ? ` | ${p.outputPower} dBm` : ''}`
+                                      : isCustConnected
+                                      ? `Port ${p.portNumber}: Terhubung ke Pelanggan${p.outputPower !== null ? ` | ${p.outputPower} dBm` : ''}`
+                                      : childOdp
+                                      ? `Port ${p.portNumber}: Feeder ke ODP ${childOdp.name}${p.outputPower !== null ? ` | ${p.outputPower} dBm` : ''}`
+                                      : isOdpDownlink
+                                      ? `Port ${p.portNumber}: Feeder Uplink ODP Downlink${p.outputPower !== null ? ` | ${p.outputPower} dBm` : ''}`
+                                      : isPass
+                                      ? `Port ${p.portNumber} (Pass): Tersedia untuk uplink ODP lanjutan${p.outputPower !== null ? ` | ${p.outputPower} dBm` : ''}`
+                                      : `Port ${p.portNumber}: Kosong — klik untuk assign pelanggan${p.outputPower !== null ? ` | Estimasi ${p.outputPower} dBm` : ''}`
+                                  }
+                                  onClick={() => {
+                                    if (childOdp) {
+                                      handleNavigateChild(childOdp.id)
+                                    } else if (!isOccupied && !isPass && !isSplitterUplink) {
+                                      navigate(`/customers/new?odpId=${odp.id}&odpPort=${p.portNumber}&splitterPortId=${p.id}`)
+                                    }
+                                  }}
+                                  className={`rounded-lg text-center font-mono border transition-all ${
+                                    isSplitterUplink
+                                      ? "bg-sky-500/15 border-sky-500/40 text-sky-300 cursor-default"
+                                      : isCustConnected
+                                      ? (cust?.serviceStatus === "SUSPENDED" || cust?.serviceStatus === "ISOLIR")
+                                        ? "bg-amber-500/15 border-amber-500/40 text-amber-400 cursor-default"
+                                        : "bg-emerald-500/15 border-emerald-500/40 text-emerald-400 cursor-default"
+                                      : isOdpDownlink
+                                      ? "bg-purple-500/15 border-purple-500/40 text-purple-400 cursor-pointer hover:bg-purple-500/25"
+                                      : isPass
+                                      ? "bg-purple-500/5 border-purple-500/20 text-purple-300/70 cursor-default"
+                                      : "bg-[var(--bg-secondary)] border-[var(--border)] text-muted hover:border-[var(--accent)]/60 hover:bg-[var(--accent-glow)] hover:text-[var(--accent)] cursor-pointer"
+                                  }`}
+                                  style={{ paddingTop: "7px", paddingBottom: "7px" }}
+                                >
+                                  <div className="text-[11px] font-bold leading-none flex items-center justify-center gap-1">
+                                    <span>{p.portNumber}</span>
+                                    {isSplitterUplink ? (
+                                      <span className="text-[8px] bg-sky-500/30 text-sky-300 px-1 rounded">SPLICE</span>
+                                    ) : isPass && (
+                                      <span className="text-[8px] bg-purple-500/30 text-purple-300 px-1 rounded">P</span>
+                                    )}
+                                  </div>
+                                  {isSplitterUplink ? (
+                                    <div className="text-[8px] leading-tight mt-0.5 opacity-90 truncate px-0.5 font-sans font-semibold text-sky-300">
+                                      Uplink Slot B
+                                    </div>
+                                  ) : cust ? (
+                                    <div className="text-[8px] leading-tight mt-0.5 opacity-80 truncate px-0.5 font-sans">
+                                      {cust.name.split(" ")[0]}
+                                    </div>
+                                  ) : isCustConnected ? (
+                                    <div className="text-[8px] leading-tight mt-0.5 opacity-80 truncate px-0.5 font-sans text-emerald-300">
+                                      Pelanggan
+                                    </div>
+                                  ) : childOdp ? (
+                                    <div className="text-[8px] leading-tight mt-0.5 opacity-90 truncate px-0.5 font-sans font-semibold text-purple-300">
+                                      {childOdp.name}
+                                    </div>
+                                  ) : isOdpDownlink ? (
+                                    <div className="text-[8px] leading-tight mt-0.5 opacity-90 truncate px-0.5 font-sans font-semibold text-purple-300">
+                                      Feeder ODP
+                                    </div>
+                                  ) : p.outputPower !== null ? (
+                                    <div className="text-[7.5px] leading-tight mt-0.5 opacity-60 font-mono">
+                                      {p.outputPower}
+                                    </div>
+                                  ) : null}
+                                </div>
+                                {(cust || isCustConnected) && (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); openPortPrint(p.portNumber) }}
+                                    title={`Print label port ${p.portNumber}`}
+                                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-[var(--bg-card)] border border-[var(--border)] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:border-[var(--accent)] hover:text-[var(--accent)] text-muted z-10"
+                                  >
+                                    <Printer size={8} />
+                                  </button>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div className="flex items-center gap-4 mt-2 text-[9px] text-muted flex-wrap">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/20 border border-emerald-500/40 inline-block" /> Pelanggan Aktif
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-amber-500/20 border border-amber-500/40 inline-block" /> Suspend
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-purple-500/20 border border-purple-500/40 inline-block" /> Feeder ODP Downstream
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-[var(--bg-secondary)] border border-[var(--border)] inline-block" /> Kosong
+                    </span>
+                  </div>
+                </div>
               ) : (
                 <>
-                  {/* Tentukan cols: <=8 → cols=capacity, >8 → cols=8 */}
                   <div className="grid gap-2" style={{
-                    gridTemplateColumns: `repeat(${capacity <= 8 ? capacity : capacity <= 16 ? 8 : capacity <= 24 ? 8 : 8}, 1fr)`
+                    gridTemplateColumns: `repeat(${capacity <= 8 ? capacity : 8}, 1fr)`
                   }}>
                     {Array.from({ length: capacity }, (_, i) => {
                       const port = i + 1
-                      const cust = portMap[port]
+                      const cust = (odp.customers || []).find(c => String(c.odpPort) === String(port))
+                      const childOdp = (odp.downlinkOdps || []).find(d => d.uplinkPort === String(port))
                       return (
                         <div key={port} className="relative group">
                           <div
-                            title={cust ? `Port ${port}: ${cust.name}` : `Port ${port}: Kosong — klik untuk assign`}
-                            onClick={() => { if (!cust) navigate(`/customers/new?odpId=${odp.id}&odpPort=${port}`) }}
+                            title={
+                              cust 
+                                ? `Port ${port}: ${cust.name}` 
+                                : childOdp 
+                                ? `Port ${port}: Feeder ke ODP ${childOdp.name}` 
+                                : `Port ${port}: Kosong ? klik untuk assign`
+                            }
+                            onClick={() => {
+                              if (childOdp) {
+                                handleNavigateChild(childOdp.id)
+                              } else if (!cust) {
+                                navigate(`/customers/new?odpId=${odp.id}&odpPort=${port}`)
+                              }
+                            }}
                             className={`rounded-lg text-center font-mono border transition-all ${
                               cust
-                                ? cust.serviceStatus === 'ACTIVE'
-                                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 cursor-default'
-                                  : 'bg-amber-500/15 border-amber-500/40 text-amber-400 cursor-default'
-                                : 'bg-[var(--bg-secondary)] border-[var(--border)] text-muted hover:border-[var(--accent)]/60 hover:bg-[var(--accent-glow)] hover:text-[var(--accent)] cursor-pointer'
+                                ? cust.serviceStatus === "ACTIVE"
+                                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400 cursor-default"
+                                  : "bg-amber-500/15 border-amber-500/40 text-amber-400 cursor-default"
+                                : childOdp
+                                ? "bg-purple-500/15 border-purple-500/40 text-purple-400 cursor-pointer hover:bg-purple-500/25"
+                                : "bg-[var(--bg-secondary)] border-[var(--border)] text-muted hover:border-[var(--accent)]/60 hover:bg-[var(--accent-glow)] hover:text-[var(--accent)] cursor-pointer"
                             }`}
-                            style={{ paddingTop: '7px', paddingBottom: '7px' }}
+                            style={{ paddingTop: "7px", paddingBottom: "7px" }}
                           >
                             <div className="text-[11px] font-bold leading-none">{port}</div>
                             {cust && (
                               <div className="text-[8px] leading-tight mt-0.5 opacity-75 truncate px-0.5">
-                                {cust.name.split(' ')[0]}
+                                {cust.name.split(" ")[0]}
+                              </div>
+                            )}
+                            {childOdp && (
+                              <div className="text-[8px] leading-tight mt-0.5 opacity-90 truncate px-0.5 font-sans font-semibold text-purple-300">
+                                {childOdp.name}
                               </div>
                             )}
                           </div>
@@ -426,20 +601,24 @@ export default function OdpDetail({ odpId, onClose, onEdit, onDelete, onNavigate
                       )
                     })}
                   </div>
-                  <div className="flex items-center gap-4 mt-2">
-                    <span className="flex items-center gap-1 text-[9px] text-muted">
-                      <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/20 border border-emerald-500/40 inline-block" /> Aktif
+                  <div className="flex items-center gap-4 mt-2 text-[9px] text-muted flex-wrap">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/20 border border-emerald-500/40 inline-block" /> Pelanggan Aktif
                     </span>
-                    <span className="flex items-center gap-1 text-[9px] text-muted">
+                    <span className="flex items-center gap-1">
                       <span className="w-2.5 h-2.5 rounded-sm bg-amber-500/20 border border-amber-500/40 inline-block" /> Suspend
                     </span>
-                    <span className="flex items-center gap-1 text-[9px] text-muted">
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-purple-500/20 border border-purple-500/40 inline-block" /> Feeder ODP Downstream
+                    </span>
+                    <span className="flex items-center gap-1">
                       <span className="w-2.5 h-2.5 rounded-sm bg-[var(--bg-secondary)] border border-[var(--border)] inline-block" /> Kosong
                     </span>
                   </div>
                 </>
               )}
             </div>
+
 
             {/* Customer list */}
             {odp.customers?.length > 0 && (

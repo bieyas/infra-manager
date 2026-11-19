@@ -13,9 +13,23 @@ router.use(authenticate)
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function syncOdpUsedPorts(odpId, tx = prisma) {
+export async function syncOdpUsedPorts(odpId, tx = prisma) {
   if (!odpId) return
-  const count = await tx.customer.count({ where: { odpId } })
+  const splitterCount = await tx.splitterInstance.count({ where: { odpId } })
+  let count = 0
+  if (splitterCount > 0) {
+    count = await tx.splitterPort.count({
+      where: {
+        splitterInstance: { odpId },
+        connectionStatus: 'CONNECTED',
+        connectedToType: { in: ['CUSTOMER', 'ODP'] }
+      }
+    })
+  } else {
+    const custCount = await tx.customer.count({ where: { odpId } })
+    const dlCount = await tx.odp.count({ where: { uplinkOdpId: odpId } })
+    count = custCount + dlCount
+  }
   await tx.odp.update({ where: { id: odpId }, data: { usedPorts: count } })
 }
 
@@ -24,29 +38,70 @@ async function syncOdpUsedPorts(odpId, tx = prisma) {
  * Frontend bisa mengirim format "splitterInstanceId:portNum" (dari OdpPortSelector)
  * atau langsung UUID SplitterPort. Return null jika tidak ditemukan.
  */
-async function resolvePortId(raw) {
+export async function resolvePortId(raw) {
   if (!raw) return null
-  if (raw.includes(':')) {
-    const [instanceId, portNumStr] = raw.split(':')
+  const str = String(raw).trim()
+  if (str.includes(':')) {
+    const [instanceId, portNumStr] = str.split(':')
     const port = await prisma.splitterPort.findFirst({
-      where: { splitterInstanceId: instanceId, portNumber: parseInt(portNumStr) },
-      select: { id: true },
+      where: { splitterInstanceId: instanceId, portNumber: parseInt(portNumStr, 10) },
+      select: { id: true, portNumber: true },
     })
     return port?.id ?? null
   }
-  // Cek apakah sudah UUID valid
-  const port = await prisma.splitterPort.findUnique({
-    where: { id: raw },
-    select: { id: true },
-  })
-  return port?.id ?? null
+  try {
+    const port = await prisma.splitterPort.findUnique({
+      where: { id: str },
+      select: { id: true, portNumber: true },
+    })
+    return port?.id ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Auto-resolve splitterPortId jika hanya odpId dan odpPort yang diberikan.
+ */
+export async function autoResolveSplitterPort(odpId, odpPort, splitterPortId) {
+  if (splitterPortId) {
+    const resolved = await resolvePortId(splitterPortId)
+    if (resolved) return resolved
+  }
+  if (odpId && odpPort) {
+    // Prioritaskan splitter simetris (PLC drop pelanggan) jika ada
+    const portSym = await prisma.splitterPort.findFirst({
+      where: {
+        splitterInstance: { 
+          odpId,
+          splitterType: { category: 'SYMMETRIC' }
+        },
+        portNumber: parseInt(odpPort, 10),
+        portType: { not: 'PASS_THROUGH' },
+      },
+      select: { id: true }
+    })
+    if (portSym) return portSym.id
+
+    const port = await prisma.splitterPort.findFirst({
+      where: {
+        splitterInstance: { odpId },
+        portNumber: parseInt(odpPort, 10),
+        portType: { not: 'PASS_THROUGH' },
+      },
+      orderBy: { splitterInstance: { sequenceOrder: 'desc' } },
+      select: { id: true }
+    })
+    return port?.id ?? null
+  }
+  return null
 }
 
 /**
  * Claim sebuah SplitterPort untuk customer tertentu.
  * Set connectionStatus=CONNECTED, connectedToType='CUSTOMER', connectedToId=customerId
  */
-async function claimSplitterPort(splitterPortId, customerId, tx = prisma) {
+export async function claimSplitterPort(splitterPortId, customerId, tx = prisma) {
   if (!splitterPortId) return
   await tx.splitterPort.update({
     where: { id: splitterPortId },
@@ -62,7 +117,7 @@ async function claimSplitterPort(splitterPortId, customerId, tx = prisma) {
  * Lepas SplitterPort — reset ke AVAILABLE jika masih terhubung ke customer ini.
  * Pakai customerId sebagai guard agar tidak melepas port milik customer lain.
  */
-async function releaseSplitterPort(splitterPortId, customerId, tx = prisma) {
+export async function releaseSplitterPort(splitterPortId, customerId, tx = prisma) {
   if (!splitterPortId) return
   await tx.splitterPort.updateMany({
     where: {
@@ -77,6 +132,95 @@ async function releaseSplitterPort(splitterPortId, customerId, tx = prisma) {
     },
   })
 }
+
+/**
+ * Memastikan sebuah port ODP / SplitterPort belum digunakan oleh pelanggan lain atau ODP downlink.
+ * Melempar error dengan status 409 jika port konflik.
+ */
+export async function assertPortAvailable({ odpId, odpPort, splitterPortId, excludeCustomerId = null, tx = prisma }) {
+  if (!odpId && !splitterPortId) return { available: true, resolvedPortId: null }
+
+  let targetPortId = null
+  if (splitterPortId) {
+    targetPortId = await resolvePortId(splitterPortId)
+  }
+  if (!targetPortId && odpId && odpPort) {
+    targetPortId = await autoResolveSplitterPort(odpId, odpPort, null)
+  }
+
+  // 1. Validasi di tabel SplitterPort
+  if (targetPortId) {
+    const port = await tx.splitterPort.findUnique({
+      where: { id: targetPortId },
+      include: {
+        splitterInstance: { include: { odp: { select: { id: true, name: true } } } }
+      }
+    })
+
+    if (port) {
+      const odpName = port.splitterInstance?.odp?.name || 'ODP'
+
+      if (port.connectedToType === 'SPLITTER') {
+        const err = new Error(`Port ${port.portNumber} pada ODP "${odpName}" adalah internal feeder yang disambung ke Splitter berikutnya dan tidak dapat digunakan untuk pelanggan.`)
+        err.status = 409
+        throw err
+      }
+
+      if (port.portType === 'PASS_THROUGH') {
+        const err = new Error(`Port ${port.portNumber} pada ODP "${odpName}" adalah port PASS-THROUGH (feeder) dan tidak dapat digunakan untuk pelanggan.`)
+        err.status = 409
+        throw err
+      }
+
+      if (port.connectionStatus === 'CONNECTED' && port.connectedToType === 'ODP') {
+        let childName = 'ODP Lain'
+        if (port.connectedToId) {
+          const childOdp = await tx.odp.findUnique({ where: { id: port.connectedToId }, select: { name: true } })
+          if (childOdp) childName = childOdp.name
+        }
+        const err = new Error(`Port ${port.portNumber} pada ODP "${odpName}" sudah digunakan sebagai feeder uplink untuk ODP "${childName}".`)
+        err.status = 409
+        throw err
+      }
+
+      if (port.connectionStatus === 'CONNECTED' && port.connectedToType === 'CUSTOMER') {
+        if (!excludeCustomerId || port.connectedToId !== excludeCustomerId) {
+          let occupantName = 'pelanggan lain'
+          if (port.connectedToId) {
+            const occCust = await tx.customer.findUnique({ where: { id: port.connectedToId }, select: { name: true, customerId: true } })
+            if (occCust) occupantName = `pelanggan ${occCust.name} (${occCust.customerId})`
+          }
+          const err = new Error(`Port ${port.portNumber} pada ODP "${odpName}" sudah digunakan oleh ${occupantName}. Satu port tidak boleh digunakan oleh lebih dari 1 pelanggan.`)
+          err.status = 409
+          throw err
+        }
+      }
+    }
+  }
+
+  // 2. Validasi numerik di tabel Customer (mencegah duplikasi odpId + odpPort)
+  if (odpId && odpPort) {
+    const pNum = parseInt(odpPort, 10)
+    const existing = await tx.customer.findFirst({
+      where: {
+        odpId,
+        odpPort: pNum,
+        ...(excludeCustomerId ? { id: { not: excludeCustomerId } } : {})
+      },
+      select: { id: true, name: true, customerId: true, odp: { select: { name: true } } }
+    })
+
+    if (existing) {
+      const odpName = existing.odp?.name || 'ODP'
+      const err = new Error(`Port ${pNum} pada ODP "${odpName}" sudah digunakan oleh pelanggan ${existing.name} (${existing.customerId}). Satu port tidak boleh digunakan oleh lebih dari 1 pelanggan.`)
+      err.status = 409
+      throw err
+    }
+  }
+
+  return { available: true, resolvedPortId: targetPortId }
+}
+
 
 // ── GET /api/customers ────────────────────────────────────────────────────────
 
@@ -110,6 +254,10 @@ router.get('/', async (req, res, next) => {
         include: {
           odp: { select: { id: true, name: true } },
           sourceDevice: { select: { id: true, name: true } },
+          htbBox: { select: { id: true, name: true, modelType: true } },
+          htbPort: { select: { id: true, portType: true, portIndex: true, label: true, wavelength: true } },
+          hostedHtbBoxes: { select: { id: true, name: true } },
+          bridgedHtbBoxes: { select: { id: true, name: true } },
         },
         orderBy: { name: 'asc' },
         take,
@@ -188,6 +336,15 @@ router.get('/:id', async (req, res, next) => {
           },
         },
         sourceDevice: { select: { id: true, name: true, ip: true, mgmtPort: true, snmpCommunity: true, snmpVersion: true } },
+        htbBox: {
+          include: {
+            ports: true,
+            uplinkHtb: { select: { id: true, name: true } },
+          },
+        },
+        htbPort: true,
+        hostedHtbBoxes: { select: { id: true, name: true, modelType: true, address: true } },
+        bridgedHtbBoxes: { select: { id: true, name: true, modelType: true, address: true } },
       },
     })
     if (!customer) return res.status(404).json({ error: 'Customer not found' })
@@ -448,6 +605,7 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
     const {
       customerId, name, phone, address, lat, lng,
       odpId, odpPort, splitterPortId,
+      distributionType, htbBoxId, htbPortId, cpeType,
       onuSn, onuIndex, rxPower, txPower,
       packageName, packageSpeed, vlan, ipAddress, pppoeUsername, pppoePassword,
       installerName, installDate, contractExpiry,
@@ -458,17 +616,24 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
     if (!name)       return res.status(400).json({ error: 'name wajib diisi' })
 
     // Resolve format "instanceId:portNum" → SplitterPort UUID
-    const resolvedPortId = await resolvePortId(splitterPortId)
-
-    // Validasi: pastikan SplitterPort tidak sedang dipakai customer lain
-    if (resolvedPortId) {
-      const port = await prisma.splitterPort.findUnique({
-        where: { id: resolvedPortId },
-        select: { connectionStatus: true, connectedToId: true },
-      })
-      if (port && port.connectionStatus === 'CONNECTED' && port.connectedToId) {
-        return res.status(409).json({ error: 'Port splitter sudah digunakan oleh pelanggan lain' })
+    // Validasi defensif: pastikan port tidak sedang dipakai pelanggan lain / ODP lain
+    let resolvedPortId = null
+    try {
+      if (distributionType !== 'HTB') {
+        const check = await assertPortAvailable({
+          odpId: odpId || null,
+          odpPort: odpPort ? parseInt(odpPort, 10) : null,
+          splitterPortId: splitterPortId || null,
+          excludeCustomerId: null,
+        })
+        resolvedPortId = check.resolvedPortId
       }
+      if (distributionType === 'HTB' && htbPortId) {
+        await assertHtbPortAvailable({ htbBoxId, htbPortId, excludeCustomerId: null })
+      }
+    } catch (err) {
+      if (err.status === 409) return res.status(409).json({ error: err.message })
+      throw err
     }
 
     const customer = await prisma.$transaction(async (tx) => {
@@ -477,9 +642,13 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
           customerId, name, phone: phone || null, address,
           lat: lat ? parseFloat(lat) : null,
           lng: lng ? parseFloat(lng) : null,
-          odpId:          odpId || null,
-          odpPort:        odpPort ? parseInt(odpPort) : null,
-          splitterPortId: resolvedPortId || null,
+          distributionType: distributionType || 'ODP',
+          odpId:          distributionType === 'HTB' ? null : (odpId || null),
+          odpPort:        distributionType === 'HTB' ? null : (odpPort ? parseInt(odpPort) : null),
+          splitterPortId: distributionType === 'HTB' ? null : (resolvedPortId || null),
+          htbBoxId:       distributionType === 'HTB' ? (htbBoxId || null) : null,
+          htbPortId:      distributionType === 'HTB' ? (htbPortId || null) : null,
+          cpeType:        cpeType || null,
           onuSn:          onuSn || null,
           onuIndex:       onuIndex || null,
           rxPower:        rxPower != null ? parseFloat(rxPower) : null,
@@ -497,8 +666,12 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
           notes:          notes || null,
         },
       })
-      await claimSplitterPort(resolvedPortId || null, c.id, tx)
-      await syncOdpUsedPorts(odpId || null, tx)
+      if (distributionType !== 'HTB') {
+        await claimSplitterPort(resolvedPortId || null, c.id, tx)
+        await syncOdpUsedPorts(odpId || null, tx)
+      } else if (htbPortId) {
+        await claimHtbPort(htbPortId, c.id, tx)
+      }
       return c
     })
 
@@ -525,6 +698,7 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
     const {
       customerId, name, phone, address, lat, lng,
       odpId, odpPort, splitterPortId,
+      distributionType, htbBoxId, htbPortId, cpeType,
       onuSn, onuIndex, rxPower, txPower,
       packageName, packageSpeed, vlan, ipAddress, pppoeUsername, pppoePassword,
       installerName, installDate, contractExpiry,
@@ -532,10 +706,21 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
     } = req.body
 
     const oldSplitterPortId = existing.splitterPortId
-    // Resolve format "instanceId:portNum" → SplitterPort UUID
-    const resolvedNewPortId = splitterPortId !== undefined
-      ? await resolvePortId(splitterPortId)
-      : existing.splitterPortId
+    const targetOdpId = odpId !== undefined ? odpId : existing.odpId
+    const targetOdpPort = odpPort !== undefined ? odpPort : existing.odpPort
+
+    let resolvedNewPortId = null
+    if (splitterPortId !== undefined) {
+      resolvedNewPortId = await resolvePortId(splitterPortId)
+    } else if (existing.splitterPortId && (odpId !== undefined || odpPort !== undefined)) {
+      resolvedNewPortId = null
+    } else {
+      resolvedNewPortId = existing.splitterPortId
+    }
+
+    if (!resolvedNewPortId && targetOdpId && targetOdpPort) {
+      resolvedNewPortId = await autoResolveSplitterPort(targetOdpId, targetOdpPort, null)
+    }
     const newSplitterPortId = resolvedNewPortId
 
     const data = {}
@@ -545,6 +730,10 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
     if (address       !== undefined) data.address       = address
     if (lat           !== undefined) data.lat           = lat ? parseFloat(lat) : null
     if (lng           !== undefined) data.lng           = lng ? parseFloat(lng) : null
+    if (distributionType !== undefined) data.distributionType = distributionType
+    if (htbBoxId      !== undefined) data.htbBoxId      = htbBoxId || null
+    if (htbPortId     !== undefined) data.htbPortId     = htbPortId || null
+    if (cpeType       !== undefined) data.cpeType       = cpeType || null
     if (odpId         !== undefined) data.odpId         = odpId || null
     if (odpPort       !== undefined) data.odpPort       = odpPort ? parseInt(odpPort) : null
     if (splitterPortId !== undefined) data.splitterPortId = resolvedNewPortId || null
@@ -563,29 +752,55 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
     if (contractExpiry !== undefined) data.contractExpiry = contractExpiry ? new Date(contractExpiry) : null
     if (serviceStatus !== undefined) data.serviceStatus = serviceStatus
     if (notes         !== undefined) data.notes         = notes || null
-    const portChanged = newSplitterPortId !== oldSplitterPortId
+    // Validasi defensif: pastikan port baru tidak sedang dipakai pelanggan lain / ODP lain
+    const portNeedsCheck = odpId !== undefined || odpPort !== undefined || splitterPortId !== undefined
+    if (portNeedsCheck && (targetOdpId || newSplitterPortId) && distributionType !== 'HTB') {
+      try {
+        await assertPortAvailable({
+          odpId: targetOdpId || null,
+          odpPort: targetOdpPort ? parseInt(targetOdpPort, 10) : null,
+          splitterPortId: newSplitterPortId || null,
+          excludeCustomerId: req.params.id,
+        })
+      } catch (err) {
+        if (err.status === 409) return res.status(409).json({ error: err.message })
+        throw err
+      }
+    }
 
-    // Validasi port baru tidak sedang dipakai customer lain
-    if (portChanged && newSplitterPortId) {
-      const port = await prisma.splitterPort.findUnique({
-        where: { id: newSplitterPortId },
-        select: { connectionStatus: true, connectedToId: true },
-      })
-      if (port && port.connectionStatus === 'CONNECTED' && port.connectedToId !== req.params.id) {
-        return res.status(409).json({ error: 'Port splitter sudah digunakan oleh pelanggan lain' })
+    if (htbPortId !== undefined && htbPortId && htbPortId !== existing.htbPortId) {
+      try {
+        await assertHtbPortAvailable({
+          htbBoxId: htbBoxId || existing.htbBoxId,
+          htbPortId,
+          excludeCustomerId: req.params.id,
+        })
+      } catch (err) {
+        if (err.status === 409) return res.status(409).json({ error: err.message })
+        throw err
       }
     }
 
     const customer = await prisma.$transaction(async (tx) => {
       const c = await tx.customer.update({ where: { id: req.params.id }, data })
 
-      // Lepas port lama jika berbeda
+      // Lepas port ODP lama jika berbeda
       if (portChanged && oldSplitterPortId) {
         await releaseSplitterPort(oldSplitterPortId, req.params.id, tx)
       }
-      // Claim port baru
+      // Claim port ODP baru
       if (portChanged && newSplitterPortId) {
         await claimSplitterPort(newSplitterPortId, req.params.id, tx)
+      }
+
+      // Handle HTB port change
+      if (htbPortId !== undefined && htbPortId !== existing.htbPortId) {
+        if (existing.htbPortId) {
+          await releaseHtbPort(existing.htbPortId, tx)
+        }
+        if (htbPortId) {
+          await claimHtbPort(htbPortId, req.params.id, tx)
+        }
       }
 
       // Sync usedPorts ODP lama dan baru
@@ -613,20 +828,43 @@ router.delete('/:id', requireRole('ADMIN'), async (req, res, next) => {
   try {
     const customer = await prisma.customer.findUnique({
       where: { id: req.params.id },
-      select: { odpId: true, splitterPortId: true, name: true },
+      select: { odpId: true, splitterPortId: true, htbPortId: true, name: true },
     })
     if (!customer) return res.status(404).json({ error: 'Customer not found' })
 
+    // Safeguard: Check if this customer is a Bridge Gateway for an HTB Box
+    const bridgeBox = await prisma.htbBox.findFirst({
+      where: { uplinkCustomerId: req.params.id },
+      select: { name: true },
+    })
+    if (bridgeBox) {
+      return res.status(409).json({
+        error: `Tidak dapat menghapus pelanggan "${customer.name}" karena ONU-nya saat ini menjadi Bridge Uplink untuk Box HTB "${bridgeBox.name}". Pindahkan sumber uplink Box HTB tersebut terlebih dahulu.`
+      })
+    }
+
     await prisma.$transaction(async (tx) => {
-      // 1. Release SplitterPort dulu — connectedToId masih terisi id ini
+      // 1. Release SplitterPort jika ada
       if (customer.splitterPortId) {
         await releaseSplitterPort(customer.splitterPortId, req.params.id, tx)
       }
-      // 2. Delete customer (Prisma akan null-kan FK splitterPortId otomatis via onDelete:SetNull tidak ada —
-      //    tapi karena kita sudah null connectedToId di SplitterPort, aman)
+      await tx.splitterPort.updateMany({
+        where: { connectedToId: req.params.id },
+        data: { connectionStatus: "AVAILABLE", connectedToType: null, connectedToId: null }
+      })
+
+      // 2. Release HTB port jika ada
+      if (customer.htbPortId) {
+        await releaseHtbPort(customer.htbPortId, tx)
+      }
+
+      // 3. Delete customer
       await tx.customer.delete({ where: { id: req.params.id } })
-      // 3. Sync ODP usedPorts
-      await syncOdpUsedPorts(customer.odpId, tx)
+
+      // 4. Sync ODP usedPorts
+      if (customer.odpId) {
+        await syncOdpUsedPorts(customer.odpId, tx)
+      }
     })
 
     res.status(204).end()

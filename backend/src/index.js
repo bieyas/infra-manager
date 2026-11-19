@@ -14,6 +14,7 @@ import ipamV2Router  from './routes/ipam-v2.js'
 import ftthRouter    from './routes/ftth.js'
 import driverRouter  from './routes/driver.js'
 import odpRouter     from './routes/odp.js'
+import htbRouter     from './routes/htb.js'
 import splitterTypesRouter from './routes/splitter-types.js'
 import coverageZonesRouter from './routes/coverage-zones.js'
 import usersRouter     from './routes/users.js'
@@ -23,6 +24,7 @@ import customerRouter   from './routes/customers.js'
 import dashboardRouter  from './routes/dashboard.js'
 import settingsRouter   from './routes/settings.js'
 import helpdeskRouter   from './routes/helpdesk.js'
+import accelPppRouter  from './routes/accel-ppp.js'
 import { startTrafficCollector } from './lib/trafficCollector.js'
 import { initializeRemoteNatProxy } from './lib/remoteProxyNatV2.js'
 
@@ -68,6 +70,8 @@ app.use('/api/ipam/v2',    ipamV2Router)
 app.use('/api/ftth',       ftthRouter)
 app.use('/api/driver',    driverRouter)
 app.use('/api/odp',       odpRouter)
+app.use('/api/htb-boxes', htbRouter)
+app.use('/api/htb',       htbRouter)
 app.use('/api/splitter-types',  splitterTypesRouter)
 app.use('/api/coverage-zones', coverageZonesRouter)
 app.use('/api/users',         usersRouter)
@@ -77,6 +81,7 @@ app.use('/api/customers',     customerRouter)
 app.use('/api/dashboard',     dashboardRouter)
 app.use('/api/settings',      settingsRouter)
 app.use('/api/helpdesk',      helpdeskRouter)
+app.use('/api/accel-ppp',     accelPppRouter)
 
 // ── Health check ─────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', ts: new Date() }))

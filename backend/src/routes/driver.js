@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import prisma      from '../lib/prisma.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
+import { autoResolveSplitterPort, claimSplitterPort, releaseSplitterPort, syncOdpUsedPorts, assertPortAvailable } from './customers.js'
 import { createDriver, driverInfo }  from '../drivers/registry.js'
 import { withDriver }                from '../drivers/BaseDriver.js'
 import { getSnapshot, setSnapshot, invalidateSnapshot, cacheStats } from '../lib/snapshotCache.js'
@@ -718,6 +719,374 @@ router.get('/:deviceId/olt/onu-by-sn/:sn', requireRole('ADMIN', 'TECHNICIAN'), a
     res.json({ sn: req.params.sn, onuIndex })
   } catch (e) {
     res.status(502).json({ error: 'Driver error', detail: e.message })
+  }
+})
+
+
+// ?? OUI Vendors & Optical Evaluation ??????????????????????????????????????????
+
+const OUI_VENDORS = [
+  { prefix: 'b4:e4:6b', vendor: 'VSOL / C-Data' },
+  { prefix: '00:11:46', vendor: 'FiberHome' },
+  { prefix: '00:11:41', vendor: 'FiberHome' },
+  { prefix: '14:00:7d', vendor: 'ZTE / OEM' },
+  { prefix: 'e0:67:b3', vendor: 'Huawei' },
+  { prefix: '00:25:9e', vendor: 'Huawei' },
+  { prefix: '48:8a:d2', vendor: 'ZTE' },
+  { prefix: 'a0:c5:89', vendor: 'FiberHome' },
+  { prefix: '70:a8:e3', vendor: 'VSOL' },
+  { prefix: '00:1a:2b', vendor: 'BDCOM' },
+]
+
+function detectVendorFromMac(mac) {
+  if (!mac) return 'Unknown'
+  const clean = mac.toLowerCase().replace(/[^a-f0-9]/g, '')
+  if (clean.length < 6) return 'Unknown'
+  const prefix = `${clean.slice(0, 2)}:${clean.slice(2, 4)}:${clean.slice(4, 6)}`
+  const match = OUI_VENDORS.find(v => v.prefix === prefix)
+  return match ? match.vendor : 'Generic ONU'
+}
+
+function evaluateRxPower(rx) {
+  if (rx == null || isNaN(rx)) return { level: 'unknown', label: 'Belum Ada Data', color: 'muted' }
+  const val = Number(rx)
+  if (val >= -24.0) return { level: 'good', label: 'Bagus', color: 'emerald' }
+  if (val >= -27.0) return { level: 'warning', label: 'Perlu Perhatian', color: 'amber' }
+  return { level: 'critical', label: 'Kritis (LOS Risk)', color: 'rose' }
+}
+
+// ?? GET /api/driver/:deviceId/olt/autofind
+// Scan OLT for all connected ONUs, cross-reference with DB Customer records,
+// classify into unprovisioned (new) vs provisioned.
+router.get('/:deviceId/olt/autofind', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  try {
+    const device = await getDeviceWithCreds(req.params.deviceId)
+    if (!device) return res.status(404).json({ error: 'Device not found' })
+    if (device.type !== 'OLT') return res.status(400).json({ error: 'Device is not an OLT' })
+
+    const driver = createDriver(device)
+    let rawOnus = []
+    if (typeof driver.getAutofindOnus === 'function') {
+      rawOnus = await withDriver(driver, d => d.getAutofindOnus())
+    } else if (typeof driver.getOnuList === 'function') {
+      const ponCount = device.ponCount || 4
+      for (let i = 1; i <= ponCount; i++) {
+        const port = `0/${i}`
+        const list = await withDriver(driver, d => d.getOnuList(port)).catch(() => [])
+        rawOnus.push(...list)
+      }
+    } else {
+      return res.status(501).json({ error: 'Driver does not support autofind' })
+    }
+
+    const [allCustomers, odps] = await Promise.all([
+      prisma.customer.findMany({
+        select: {
+          id: true,
+          customerId: true,
+          name: true,
+          pppoeUsername: true,
+          onuSn: true,
+          onuIndex: true,
+          rxPower: true,
+          txPower: true,
+          odpId: true,
+          odpPort: true,
+          packageName: true,
+          address: true,
+          odp: { select: { id: true, name: true } },
+        },
+      }),
+      prisma.odp.findMany({
+        select: { id: true, name: true, ponPort: true, splitterRatio: true, usedPorts: true },
+        orderBy: { name: 'asc' },
+      }),
+    ])
+
+    const customerByMac = new Map()
+    const customerByIndex = new Map()
+    const customerByName = new Map()
+    const customerByUsername = new Map()
+
+    for (const c of allCustomers) {
+      if (c.onuSn) customerByMac.set(c.onuSn.toLowerCase(), c)
+      if (c.onuIndex) customerByIndex.set(c.onuIndex, c)
+      if (c.name) customerByName.set(c.name.trim().toLowerCase(), c)
+      if (c.pppoeUsername) customerByUsername.set(c.pppoeUsername.trim().toLowerCase(), c)
+    }
+
+    const unassignedCustomers = allCustomers
+      .filter(c => !c.onuSn && !c.onuIndex)
+      .map(c => ({
+        id: c.id,
+        customerId: c.customerId,
+        name: c.name,
+        pppoeUsername: c.pppoeUsername,
+        packageName: c.packageName,
+        address: c.address,
+      }))
+
+    const provisioned = []
+    const unprovisioned = []
+
+    for (const onu of rawOnus) {
+      const macClean = onu.mac ? onu.mac.toLowerCase() : null
+      const onuIndex = onu.index
+      const onuName = (onu.name && onu.name !== 'N/A') ? onu.name.trim() : null
+
+      let matchedCustomer = null
+      let matchSource = null
+
+      if (macClean && customerByMac.has(macClean)) {
+        matchedCustomer = customerByMac.get(macClean)
+        matchSource = 'mac'
+      } else if (onuIndex && customerByIndex.has(onuIndex)) {
+        matchedCustomer = customerByIndex.get(onuIndex)
+        matchSource = 'index'
+      } else if (onuName && customerByName.has(onuName.toLowerCase())) {
+        matchedCustomer = customerByName.get(onuName.toLowerCase())
+        matchSource = 'name'
+      } else if (onuName && customerByUsername.has(onuName.toLowerCase())) {
+        matchedCustomer = customerByUsername.get(onuName.toLowerCase())
+        matchSource = 'pppoeUsername'
+      }
+
+      const health = evaluateRxPower(onu.rxPower)
+      const vendor = detectVendorFromMac(onu.mac)
+
+      const enriched = {
+        ...onu,
+        vendor,
+        health,
+        matchedCustomer: matchedCustomer ? {
+          id: matchedCustomer.id,
+          customerId: matchedCustomer.customerId,
+          name: matchedCustomer.name,
+          pppoeUsername: matchedCustomer.pppoeUsername,
+          packageName: matchedCustomer.packageName,
+          odp: matchedCustomer.odp,
+          odpPort: matchedCustomer.odpPort,
+        } : null,
+        matchSource,
+      }
+
+      if (matchedCustomer && (matchedCustomer.onuSn || matchedCustomer.onuIndex)) {
+        provisioned.push(enriched)
+      } else {
+        enriched.suggestedCustomer = matchedCustomer ? {
+          id: matchedCustomer.id,
+          customerId: matchedCustomer.customerId,
+          name: matchedCustomer.name,
+          pppoeUsername: matchedCustomer.pppoeUsername,
+        } : null
+        unprovisioned.push(enriched)
+      }
+    }
+
+    res.json({
+      deviceId: device.id,
+      deviceName: device.name,
+      totalOnus: rawOnus.length,
+      unprovisionedCount: unprovisioned.length,
+      provisionedCount: provisioned.length,
+      unprovisioned,
+      provisioned,
+      unassignedCustomers,
+      odps,
+      fetchedAt: new Date(),
+    })
+  } catch (e) {
+    res.status(502).json({ error: 'Autofind failed', detail: e.message })
+  }
+})
+
+// ?? POST /api/driver/:deviceId/olt/provision
+// Provision an ONU: configure description & profile on OLT, link to Customer & ODP in DB
+router.post('/:deviceId/olt/provision', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  try {
+    const { ponPort, onuId, mac, description, srvProfileId, customerId, odpId, odpPort, splitterPortId } = req.body
+    if (!ponPort || onuId == null) {
+      return res.status(400).json({ error: 'ponPort dan onuId wajib diisi' })
+    }
+
+    const device = await getDeviceWithCreds(req.params.deviceId)
+    if (!device) return res.status(404).json({ error: 'Device not found' })
+    if (device.type !== 'OLT') return res.status(400).json({ error: 'Device is not an OLT' })
+
+    const driver = createDriver(device)
+    let oltResult = null
+    if (typeof driver.provisionOnu === 'function') {
+      oltResult = await withDriver(driver, d => d.provisionOnu({
+        ponPort,
+        onuId,
+        mac,
+        description,
+        srvProfileId: srvProfileId || 609,
+      }))
+    }
+
+    let customer = null
+    const onuIndex = `${String(ponPort).replace(/^epon/i, '')}:${onuId}`
+
+    if (customerId) {
+      let liveRxPower = null
+      let liveTxPower = null
+      if (typeof driver.getOnuPower === 'function') {
+        const p = await withDriver(driver, d => d.getOnuPower(onuIndex)).catch(() => null)
+        liveRxPower = p?.onuRxPower ?? p?.oltRxPower ?? null
+        liveTxPower = p?.onuTxPower ?? null
+      }
+
+      const existingCust = await prisma.customer.findUnique({
+        where: { id: customerId },
+        select: { odpId: true, odpPort: true, splitterPortId: true }
+      })
+
+      // Resolve splitter port if ODP and port are specified
+      let targetSplitterPortId = null
+      if (odpId || splitterPortId) {
+        try {
+          const check = await assertPortAvailable({
+            odpId: odpId || null,
+            odpPort: odpPort ? Number(odpPort) : null,
+            splitterPortId: splitterPortId || null,
+            excludeCustomerId: customerId,
+          })
+          targetSplitterPortId = check.resolvedPortId
+        } catch (err) {
+          if (err.status === 409) return res.status(409).json({ error: err.message })
+          throw err
+        }
+      }
+
+      customer = await prisma.$transaction(async (tx) => {
+        // Release old port if customer was previously connected to another port
+        if (existingCust?.splitterPortId && existingCust.splitterPortId !== targetSplitterPortId) {
+          await releaseSplitterPort(existingCust.splitterPortId, customerId, tx)
+        }
+
+        // Claim new port
+        if (targetSplitterPortId) {
+          await claimSplitterPort(targetSplitterPortId, customerId, tx)
+        }
+
+        const updated = await tx.customer.update({
+          where: { id: customerId },
+          data: {
+            onuSn: mac ? mac.toLowerCase() : undefined,
+            onuIndex,
+            rxPower: liveRxPower ?? undefined,
+            txPower: liveTxPower ?? undefined,
+            odpId: odpId || undefined,
+            odpPort: odpPort ? Number(odpPort) : undefined,
+            splitterPortId: targetSplitterPortId || undefined,
+            serviceStatus: 'ACTIVE',
+            connectionStatus: 'ONLINE',
+            connectionLastSeen: new Date(),
+            connectionLastChecked: new Date(),
+          },
+        })
+
+        if (odpId) await syncOdpUsedPorts(odpId, tx)
+        if (existingCust?.odpId && existingCust.odpId !== odpId) {
+          await syncOdpUsedPorts(existingCust.odpId, tx)
+        }
+
+        return updated
+      })
+
+      if (liveRxPower != null) {
+        await prisma.powerReading.create({
+          data: {
+            nodeType: 'CUSTOMER',
+            nodeId: customerId,
+            pointType: 'CUSTOMER_RX',
+            measuredPower: liveRxPower,
+            referencePower: -20.0,
+            deviation: Number((liveRxPower - (-20.0)).toFixed(2)),
+            measuredBy: req.user?.username || 'system',
+            notes: `Aktivasi ZTP OLT port ${onuIndex} (MAC: ${mac || '?'})`,
+          },
+        }).catch(() => {})
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `ONU ${onuIndex} berhasil di-provisioning`,
+      onuIndex,
+      oltResult,
+      customer,
+    })
+  } catch (e) {
+    res.status(502).json({ error: 'Provisioning failed', detail: e.message })
+  }
+})
+
+// ?? POST /api/driver/:deviceId/olt/onu/:index/reboot
+router.post('/:deviceId/olt/onu/:index/reboot', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  try {
+    const onuIndex = req.params.index
+    const m = onuIndex.match(/^(?:epon)?(\d+\/\d+):(\d+)$/i)
+    if (!m) return res.status(400).json({ error: 'Format ONU index tidak valid. Contoh: 0/1:1' })
+
+    const ponPort = m[1]
+    const onuId = parseInt(m[2], 10)
+
+    const device = await getDeviceWithCreds(req.params.deviceId)
+    if (!device) return res.status(404).json({ error: 'Device not found' })
+
+    const driver = createDriver(device)
+    if (typeof driver.rebootOnu !== 'function') {
+      return res.status(501).json({ error: 'Driver does not support rebootOnu' })
+    }
+
+    const result = await withDriver(driver, d => d.rebootOnu({ ponPort, onuId }))
+    res.json({ success: true, message: `Perintah reboot berhasil dikirim ke ONU ${onuIndex}`, result })
+  } catch (e) {
+    res.status(502).json({ error: 'Reboot failed', detail: e.message })
+  }
+})
+
+// ?? DELETE /api/driver/:deviceId/olt/onu/:index
+router.delete('/:deviceId/olt/onu/:index', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  try {
+    const onuIndex = req.params.index
+    const m = onuIndex.match(/^(?:epon)?(\d+\/\d+):(\d+)$/i)
+    if (!m) return res.status(400).json({ error: 'Format ONU index tidak valid. Contoh: 0/1:1' })
+
+    const ponPort = m[1]
+    const onuId = parseInt(m[2], 10)
+    const mac = req.query.mac || null
+    const unbindCustomer = req.query.unbindCustomer === '1'
+
+    const device = await getDeviceWithCreds(req.params.deviceId)
+    if (!device) return res.status(404).json({ error: 'Device not found' })
+
+    const driver = createDriver(device)
+    let result = null
+    if (typeof driver.deregisterOnu === 'function') {
+      result = await withDriver(driver, d => d.deregisterOnu({ ponPort, onuId, mac }))
+    }
+
+    if (unbindCustomer) {
+      await prisma.customer.updateMany({
+        where: {
+          OR: [
+            { onuIndex },
+            ...(mac ? [{ onuSn: { equals: mac, mode: 'insensitive' } }] : [])
+          ]
+        },
+        data: {
+          onuSn: null,
+          onuIndex: null,
+        }
+      })
+    }
+
+    res.json({ success: true, message: `ONU ${onuIndex} berhasil di-deregister`, result })
+  } catch (e) {
+    res.status(502).json({ error: 'Deregister failed', detail: e.message })
   }
 })
 

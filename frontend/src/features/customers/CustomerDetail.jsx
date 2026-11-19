@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
-  X, User, MapPin, Wifi, Package, Phone, Calendar,
+  X, User, MapPin, Wifi, Package, Phone, Calendar, ShieldAlert, Zap,
   Network, Hash, Loader2, AlertCircle, ExternalLink, Copy, Router, Activity,
 } from 'lucide-react'
 import Badge from '../../components/ui/Badge'
@@ -252,6 +252,32 @@ export default function CustomerDetail({ customerId, onClose }) {
           )}
           {c && (
             <>
+              {/* Critical Infrastructure Gateway Banner (Bridge ONU) */}
+              {c.bridgedHtbBoxes?.length > 0 && (
+                <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-start gap-2.5">
+                  <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1 text-xs text-amber-200">
+                    <span className="font-bold text-amber-400 block tracking-wide">
+                      ⚠️ PERINGATAN INFRASTRUKTUR (Bridge Gateway)
+                    </span>
+                    <p className="text-[11px] leading-relaxed">
+                      ONU pelanggan ini difungsikan sebagai <b>Bridge Uplink</b> untuk Box HTB:{' '}
+                      <b>{c.bridgedHtbBoxes.map(b => b.name).join(', ')}</b>.
+                      Jangan mencabut kabel atau mematikan ONU ini di OLT karena akan mematikan seluruh distribusi pelanggan di bawahnya.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Power Host Warning */}
+              {c.hostedHtbBoxes?.length > 0 && (
+                <div className="p-3 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center gap-2 text-xs text-blue-300">
+                  <Zap className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span>
+                    Rumah pelanggan ini menjadi sumber catu daya listrik untuk Box HTB: <b>{c.hostedHtbBoxes.map(b => b.name).join(', ')}</b>.
+                  </span>
+                </div>
+              )}
               <Section title="Trafik PPPoE" icon={Activity}>
                 {/* Header Controls */}
                 <div className="flex items-center justify-between gap-2 mb-2">
@@ -429,15 +455,25 @@ export default function CustomerDetail({ customerId, onClose }) {
                 <Row label="TX Power"       value={c.txPower != null ? `${c.txPower} dBm` : null} mono />
               </Section>
 
-              {/* Koneksi FTTH */}
+              {/* Koneksi FTTH (ODP / PON) */}
               {c.odp && (
-                <Section title="Koneksi FTTH" icon={Network}>
+                <Section title="Koneksi FTTH (PON)" icon={Network}>
                   <Row label="ODP"        value={c.odp.name} />
                   <Row label="Port ODP"   value={c.odpPort} />
                   {c.splitterPort && (
                     <Row label="Splitter Port" value={`${c.splitterPort.splitterInstance?.splitterType?.name ?? ''} — Port ${c.splitterPort.portNumber}`} />
                   )}
                   {c.odp.olt && <Row label="OLT" value={c.odp.olt.name} />}
+                </Section>
+              )}
+
+              {/* Koneksi Non-OLT (Box HTB) */}
+              {c.htbBox && (
+                <Section title="Koneksi Non-OLT (Box HTB)" icon={Network}>
+                  <Row label="Box HTB"    value={c.htbBox.name} />
+                  <Row label="Port HTB"   value={c.htbPort?.label || `Port ${c.htbPort?.portIndex || '-'}`} />
+                  <Row label="Tipe Port"  value={c.htbPort?.portType === 'FO' ? `Optik SC (${c.htbPort.wavelength === '1550' ? '1550nm Side B' : '1310nm Side A'})` : 'Ethernet RJ45 LAN'} />
+                  <Row label="Perangkat CPE" value={c.cpeType || 'Router WiFi'} />
                 </Section>
               )}
 

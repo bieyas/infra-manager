@@ -57,7 +57,7 @@ export async function deleteOdp(id)        { return api.delete(`/odp/${id}`) }
 export async function checkOdpCustomers(odpId) {
   try {
     const odp = await api.get(`/odp/${odpId}`)
-    return odp.customerCount > 0 ? odp.customers || [] : []
+    return odp.customers?.length > 0 ? odp.customers : []
   } catch (e) {
     console.error('Error checking ODP customers:', e)
     return []
@@ -86,9 +86,17 @@ export const SPLITTER_OPTIONS = [
 export const MOUNT_OPTIONS = ['pole', 'wall', 'underground', 'aerial', 'pedestal']
 
 export function splitterLabel(ratio) {
-  return SPLITTER_OPTIONS.find(o => o.value === ratio)?.label ?? ratio
+  if (!ratio) return '?'
+  const opt = SPLITTER_OPTIONS.find(o => o.value === ratio || o.label === ratio)
+  if (opt) return opt.label
+  const m = String(ratio).match(/R?1[_:](\d+)/)
+  return m ? `1:${m[1]}` : ratio
 }
 
 export function capacityFromRatio(ratio) {
-  return SPLITTER_OPTIONS.find(o => o.value === ratio)?.capacity ?? 0
+  if (!ratio) return 0
+  const opt = SPLITTER_OPTIONS.find(o => o.value === ratio || o.label === ratio)
+  if (opt) return opt.capacity
+  const m = String(ratio).match(/(\d+)$/)
+  return m ? parseInt(m[1], 10) : 0
 }

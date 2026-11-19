@@ -9,6 +9,7 @@ import { useToast } from '../../context/ToastContext'
 import Button from '../../components/ui/Button'
 import LocationPickerModal from '../../components/ui/LocationPickerModal'
 import { MapSettingsProvider } from '../../context/MapSettingsContext'
+import { capacityFromRatio } from '../distribution/useDistribution'
 
 // ── Shared style ──────────────────────────────────────────────────────────────
 
@@ -77,67 +78,107 @@ function StatusSelector({ value, onChange }) {
 
 // ODP port selector — per-splitter grouped grid
 // value format: "splitterId:portNum" (multi-splitter) atau "portNum" (legacy)
-function OdpPortSelector({ odp, value, onChange }) {
+// ODP port selector ? per-splitter grouped grid
+function OdpPortSelector({ odp, value, onChange, currentCustomerId }) {
   if (!odp) return null
 
   const hasSplitters = odp.splitters?.length > 0
 
   if (hasSplitters) {
-    // ── Multi-splitter mode: render satu grup per splitter ──────────────────
     return (
       <div className="space-y-3">
         {odp.splitters.map((splitter, idx) => {
-          const portCount = splitter.splitterType?.outputCount
-            ?? splitter.ports?.length
-            ?? 8
-          const label = splitter.position
-            ?? splitter.splitterType?.name
-            ?? `Splitter ${idx + 1}`
-          const typeName = splitter.splitterType?.name ?? ''
-
-          // Ports yang sudah terpakai (connectedToType === 'CUSTOMER')
-          const usedPortNums = new Set(
-            (splitter.ports ?? [])
-              .filter(p => p.connectionStatus === 'CONNECTED' || p.connectedToType === 'CUSTOMER')
-              .map(p => p.portNumber)
-          )
+          const portCount = splitter.ports?.length ?? splitter.splitterType?.outputCount ?? 8
+          const label = splitter.position ?? splitter.splitterType?.name ?? `Splitter ${idx + 1}`
+          const typeName = splitter.splitterType?.name ?? ""
+          const isAsym = splitter.splitterType?.category === "ASYMMETRIC"
+          const ports = splitter.ports || []
 
           return (
             <div key={splitter.id} className="p-3 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] space-y-2">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-semibold text-primary">{label}</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-bold text-primary">{label}</span>
                   {typeName && (
-                    <span className="text-[9px] text-[var(--accent)] bg-[var(--accent-glow)] border border-[var(--accent)]/20 px-1.5 py-0.5 rounded-full">
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded-full border ${
+                      isAsym ? "bg-purple-500/10 text-purple-400 border-purple-500/30" : "bg-blue-500/10 text-blue-400 border-blue-500/30"
+                    }`}>
                       {typeName}
                     </span>
                   )}
                 </div>
-                <span className="text-[9px] text-muted">
-                  {usedPortNums.size}/{portCount} terpakai
+                <span className="text-[10px] text-muted">
+                  {ports.filter(p => p.connectionStatus === "CONNECTED").length}/{portCount} terpakai
                 </span>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {Array.from({ length: portCount }, (_, i) => {
-                  const portNum = i + 1
-                  const portKey = `${splitter.id}:${portNum}`
-                  const isSelected = value === portKey
-                  const isUsed = usedPortNums.has(portNum)
+                {ports.map((port) => {
+                  const portNum = port.portNumber
+                  const isSplitterUplink = port.connectedToType === 'SPLITTER'
+                  const cust = (odp.customers || []).find(c => 
+                    c.splitterPortId === port.id || 
+                    port.connectedToId === c.id ||
+                    (String(c.odpPort) === String(portNum) && (!c.splitterPortId || c.splitterPortId === splitter.id))
+                  )
+                  const childOdp = (odp.downlinkOdps || []).find(d => 
+                    port.connectedToId === d.id ||
+                    d.uplinkPort === port.id ||
+                    d.uplinkPort === `${splitter.id}-${portNum}` || 
+                    d.uplinkPort === `${splitter.id}:${portNum}` || 
+                    d.uplinkPort === String(portNum)
+                  )
+                  const isCurrentCustomer = currentCustomerId && (cust?.id === currentCustomerId || port.connectedToId === currentCustomerId)
+                  const isOdpDownlink = !!childOdp || (port.connectionStatus === "CONNECTED" && port.connectedToType === "ODP")
+                  const isCustConnected = (!isCurrentCustomer && (!!cust || (port.connectionStatus === "CONNECTED" && port.connectedToType === "CUSTOMER")))
+                  const isPass = port.portType === "PASS_THROUGH"
+                  const isOccupied = (!isCurrentCustomer && (isCustConnected || isOdpDownlink || isSplitterUplink || port.connectionStatus === "CONNECTED")) || isPass || isSplitterUplink
+                  const isSelected = value === port.id || (value === String(portNum) && (!isAsym || !port.splitterInstanceId))
+
                   return (
                     <button
-                      key={portNum}
+                      key={port.id || portNum}
                       type="button"
-                      onClick={() => !isUsed && onChange(portKey)}
-                      title={isUsed ? `Port ${portNum} — terpakai` : `Port ${portNum}`}
-                      className={`w-8 h-8 rounded text-[10px] font-mono font-medium border transition-all relative ${
+                      disabled={isOccupied}
+                      onClick={() => !isOccupied && onChange(port.id, portNum)}
+                      title={
+                        isSplitterUplink
+                          ? `Port ${portNum} (Drop) — Spliced internal ke Splitter Slot B (tidak untuk pelanggan)`
+                          : isCurrentCustomer
+                          ? `Port ${portNum} — Port pelanggan saat ini`
+                          : cust
+                          ? `Port ${portNum} — Terpakai (${cust.name})`
+                          : isCustConnected
+                          ? `Port ${portNum} — Terpakai (Pelanggan)`
+                          : childOdp
+                          ? `Port ${portNum} — Terpakai (Feeder ODP ${childOdp.name})`
+                          : isOdpDownlink
+                          ? `Port ${portNum} — Terpakai (Feeder ODP)`
+                          : isPass
+                          ? `Port ${portNum} (Pass) — Feeder Out (tidak untuk pelanggan)`
+                          : `Port ${portNum} (Tersedia)`
+                      }
+                      className={`w-9 h-9 rounded-lg text-xs font-mono font-medium border transition-all relative flex flex-col items-center justify-center ${
                         isSelected
-                          ? 'bg-[var(--accent)] border-[var(--accent)] text-white shadow-sm'
-                          : isUsed
-                          ? 'bg-rose-500/10 border-rose-500/20 text-rose-400/50 cursor-not-allowed'
-                          : 'bg-[var(--bg-card)] border-[var(--border)] text-muted hover:border-[var(--accent)]/60 hover:text-primary cursor-pointer'
+                          ? "bg-[var(--accent)] border-[var(--accent)] text-white shadow-md font-bold"
+                          : isCurrentCustomer
+                          ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold"
+                          : isSplitterUplink
+                          ? "bg-sky-500/10 border-sky-500/20 text-sky-400/50 cursor-not-allowed"
+                          : isPass
+                          ? "bg-purple-500/5 border-purple-500/20 text-purple-300/40 cursor-not-allowed"
+                          : isOdpDownlink
+                          ? "bg-purple-500/15 border-purple-500/30 text-purple-400 cursor-not-allowed"
+                          : isCustConnected
+                          ? "bg-rose-500/10 border-rose-500/20 text-rose-400/60 cursor-not-allowed"
+                          : "bg-[var(--bg-card)] border-[var(--border)] text-primary hover:border-[var(--accent)]/60 hover:text-[var(--accent)] cursor-pointer"
                       }`}
                     >
-                      {portNum}
+                      <span>{portNum}</span>
+                      {isSplitterUplink ? (
+                        <span className="text-[6.5px] leading-none text-sky-300">SPLICE</span>
+                      ) : isPass && (
+                        <span className="text-[7px] leading-none text-purple-300">PASS</span>
+                      )}
                     </button>
                   )
                 })}
@@ -149,30 +190,51 @@ function OdpPortSelector({ odp, value, onChange }) {
     )
   }
 
-  // ── Legacy mode: flat port grid (tidak ada data splitter) ─────────────────
-  const capacity = odp.capacity ?? odp.splitterRatio
-    ? { R1_2: 2, R1_4: 4, R1_8: 8, R1_16: 16, R1_32: 32 }[odp.splitterRatio] ?? 8
-    : 8
-  const max = Math.max(Number(capacity) || 8, 4)
+  // ?? Legacy mode: flat port grid (tidak ada data splitter di DB) ????????????
+  const capacity = odp.capacity || capacityFromRatio(odp.splitterRatio) || 8
+  const max = Math.max(Number(capacity) || 8, 2)
+  const usedCount = odp.usedPorts ?? (odp.customers?.length || 0)
+
   return (
     <div className="p-3 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-muted">Pilih port</span>
-        <span className="text-[9px] text-muted">{odp.usedPorts ?? 0}/{max} terpakai</span>
+        <span className="text-xs font-bold text-primary">Port Splitter (1:{max})</span>
+        <span className="text-[10px] text-muted">{usedCount}/{max} terpakai</span>
       </div>
       <div className="flex flex-wrap gap-1.5">
         {Array.from({ length: max }, (_, i) => {
           const port = i + 1
+          const cust = (odp.customers || []).find(c => String(c.odpPort) === String(port))
+          const childOdp = (odp.downlinkOdps || []).find(d => d.uplinkPort === String(port))
+          const isCurrentCustomer = currentCustomerId && cust && cust.id === currentCustomerId
+          const isOccupied = !isCurrentCustomer && (cust || childOdp)
           const isSelected = String(value) === String(port)
+
           return (
             <button
               key={port}
               type="button"
-              onClick={() => onChange(String(port))}
-              className={`w-8 h-8 rounded text-[10px] font-mono font-medium border transition-all ${
+              disabled={isOccupied}
+              onClick={() => !isOccupied && onChange("", port)}
+              title={
+                isCurrentCustomer
+                  ? `Port ${port} ? Port pelanggan saat ini`
+                  : cust
+                  ? `Port ${port} ? Terpakai (${cust.name})`
+                  : childOdp
+                  ? `Port ${port} ? Terpakai (Feeder ODP ${childOdp.name})`
+                  : `Port ${port} (Tersedia)`
+              }
+              className={`w-9 h-9 rounded-lg text-xs font-mono font-medium border transition-all relative flex items-center justify-center ${
                 isSelected
-                  ? 'bg-[var(--accent)] border-[var(--accent)] text-white shadow-sm'
-                  : 'bg-[var(--bg-card)] border-[var(--border)] text-muted hover:border-[var(--accent)]/60 hover:text-primary'
+                  ? "bg-[var(--accent)] border-[var(--accent)] text-white shadow-md font-bold"
+                  : isCurrentCustomer
+                  ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-400 font-bold"
+                  : childOdp
+                  ? "bg-purple-500/15 border-purple-500/30 text-purple-400 cursor-not-allowed"
+                  : cust
+                  ? "bg-rose-500/10 border-rose-500/20 text-rose-400/60 cursor-not-allowed"
+                  : "bg-[var(--bg-card)] border-[var(--border)] text-primary hover:border-[var(--accent)]/60 hover:text-[var(--accent)] cursor-pointer"
               }`}
             >
               {port}
@@ -180,11 +242,21 @@ function OdpPortSelector({ odp, value, onChange }) {
           )
         })}
       </div>
+      <div className="flex items-center gap-3 pt-1 text-[10px] text-muted">
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded bg-[var(--accent)]" /> Terpilih
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded bg-rose-500/30 border border-rose-500/50" /> Terpakai
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2 h-2 rounded bg-[var(--bg-card)] border border-[var(--border)]" /> Tersedia
+        </span>
+      </div>
     </div>
   )
 }
 
-// Paket preset pills
 function PackagePresets({ onSelect }) {
   return (
     <div className="flex flex-wrap gap-1.5 mt-1">
@@ -225,8 +297,12 @@ export default function CustomerForm() {
     address:       '',
     lat:           '',
     lng:           '',
+    distributionType: searchParams.get('htbBoxId') ? 'HTB' : 'ODP',
     odpId:         searchParams.get('odpId') || '',
     odpPort:       searchParams.get('odpPort') || '',
+    htbBoxId:      searchParams.get('htbBoxId') || '',
+    htbPortId:     searchParams.get('htbPortId') || '',
+    cpeType:       'ROUTER_WIFI',
     onuSn:         '',
     onuIndex:      '',
     packageName:   '',
@@ -260,8 +336,12 @@ export default function CustomerForm() {
           address:       c.address ?? '',
           lat:           c.lat ?? '',
           lng:           c.lng ?? '',
+          distributionType: c.distributionType ?? (c.htbBoxId ? 'HTB' : 'ODP'),
           odpId:         c.odpId ?? '',
           odpPort:       c.odpPort ?? '',
+          htbBoxId:      c.htbBoxId ?? '',
+          htbPortId:     c.htbPortId ?? '',
+          cpeType:       c.cpeType ?? 'ROUTER_WIFI',
           onuSn:         c.onuSn ?? '',
           onuIndex:      c.onuIndex ?? '',
           packageName:   c.packageName ?? '',
@@ -294,6 +374,36 @@ export default function CustomerForm() {
   }, [form.packageName]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedOdp = useMemo(() => odps.find(o => o.id === form.odpId) ?? null, [odps, form.odpId])
+  const [selectedOdpDetail, setSelectedOdpDetail] = useState(null)
+  const [htbBoxes, setHtbBoxes] = useState([])
+  const [selectedHtbBoxDetail, setSelectedHtbBoxDetail] = useState(null)
+
+  useEffect(() => {
+    api.get('/htb-boxes')
+      .then(res => setHtbBoxes(res || []))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!form.htbBoxId) {
+      setSelectedHtbBoxDetail(null)
+      return
+    }
+    api.get(`/htb-boxes/${form.htbBoxId}`)
+      .then(res => setSelectedHtbBoxDetail(res))
+      .catch(() => setSelectedHtbBoxDetail(null))
+  }, [form.htbBoxId])
+
+  // Fetch live detail ODP saat form.odpId berubah
+  useEffect(() => {
+    if (!form.odpId) {
+      setSelectedOdpDetail(null)
+      return
+    }
+    api.get(`/odp/${form.odpId}`)
+      .then(data => setSelectedOdpDetail(data))
+      .catch(() => setSelectedOdpDetail(null))
+  }, [form.odpId])
 
   const set = (field, val) => {
     setForm(f => ({ ...f, [field]: val }))
@@ -301,20 +411,16 @@ export default function CustomerForm() {
   }
   const setEv = (field) => (e) => set(field, e.target.value)
 
-  // Saat port dipilih dari OdpPortSelector (bisa berformat "splitterId:portNum")
-  const handlePortSelect = (portKey) => {
-    if (portKey.includes(':')) {
-      const [splitterId, portNum] = portKey.split(':')
-      setForm(f => ({ ...f, odpPort: portNum, splitterPortId: splitterId }))
-    } else {
-      setForm(f => ({ ...f, odpPort: portKey, splitterPortId: '' }))
-    }
+  // Saat port dipilih dari OdpPortSelector
+  const handlePortSelect = (splitterPortId, portNum) => {
+    setForm(f => ({
+      ...f,
+      odpPort: String(portNum),
+      splitterPortId: splitterPortId || ''
+    }))
   }
 
-  // Compute portSelectorValue dari odpPort + splitterPortId
-  const portSelectorValue = form.splitterPortId
-    ? `${form.splitterPortId}:${form.odpPort}`
-    : form.odpPort
+  const portSelectorValue = form.splitterPortId || form.odpPort
 
   const validate = () => {
     const errs = {}
@@ -492,40 +598,172 @@ export default function CustomerForm() {
           </div>
         </Section>
 
-        {/* ── 2. Koneksi FTTH ── */}
-        <Section title="Koneksi FTTH" icon={Cable}>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Field label="ODP" hint="Optical Distribution Point">
-              <select value={form.odpId} onChange={e => { set('odpId', e.target.value); set('odpPort', ''); set('splitterPortId', '') }} className={IC}>
-                <option value="">— Pilih ODP —</option>
-                {odps.map(o => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            {(!selectedOdp || !selectedOdp.splitters?.length) && (
-            <Field label="Port ODP" hint={selectedOdp ? `Kapasitas ${selectedOdp.capacity ?? '?'} port` : 'Pilih ODP dulu'}>
-              <input
-                type="number" min="1" max="64"
-                value={form.odpPort}
-                onChange={setEv('odpPort')}
-                placeholder="Nomor port"
-                className={IC + ' font-mono'}
-                disabled={!form.odpId}
-              />
-            </Field>
-          )}
+        {/* ── 2. Koneksi Distribusi (ODP / HTB) ── */}
+        <Section title="Koneksi Distribusi" icon={Cable}>
+          {/* Toggle Jenis Jalur Distribusi */}
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-[var(--muted-foreground)]">
+              Jenis Jalur Distribusi
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => set('distributionType', 'ODP')}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  form.distributionType !== 'HTB'
+                    ? 'border-[var(--accent)] bg-[var(--accent)]/10 text-primary ring-1 ring-[var(--accent)]'
+                    : 'border-[var(--border)] text-muted hover:bg-[var(--bg-secondary)]'
+                }`}
+              >
+                <span className="font-semibold text-xs block">Jalur PON (ODP / OLT)</span>
+                <span className="text-[10px] text-muted">Passive Optical Splitter (ONU)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => set('distributionType', 'HTB')}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  form.distributionType === 'HTB'
+                    ? 'border-cyan-400 bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-400'
+                    : 'border-[var(--border)] text-muted hover:bg-[var(--bg-secondary)]'
+                }`}
+              >
+                <span className="font-semibold text-xs block text-cyan-400">Jalur Non-OLT (Box HTB)</span>
+                <span className="text-[10px] text-muted">Active Switch FO / Media Converter</span>
+              </button>
+            </div>
           </div>
 
-          {/* Port visual selector */}
-          {selectedOdp && (
-            <OdpPortSelector
-              odp={selectedOdp}
-              value={portSelectorValue}
-              onChange={handlePortSelect}
-            />
+          {/* JALUR HTB FORM */}
+          {form.distributionType === 'HTB' ? (
+            <div className="space-y-4 pt-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="Box HTB" hint="Pilih Kotak Distribusi Switch FO / Media Converter">
+                  <select
+                    value={form.htbBoxId}
+                    onChange={e => {
+                      set('htbBoxId', e.target.value)
+                      set('htbPortId', '')
+                    }}
+                    className={IC}
+                  >
+                    <option value="">— Pilih Box HTB —</option>
+                    {htbBoxes.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} ({b.modelType} • {b.address || 'Tiang'})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field label="Tipe Perangkat CPE di Pelanggan" hint="Perangkat penerima di rumah pelanggan">
+                  <select
+                    value={form.cpeType}
+                    onChange={setEv('cpeType')}
+                    className={IC}
+                  >
+                    <option value="ROUTER_WIFI">Router WiFi Standar (Drop Kabel UTP LAN)</option>
+                    <option value="HTB_SINGLE">Single HTB + Router WiFi (Drop Kabel FO)</option>
+                    <option value="ONU">ONU / ONT</option>
+                    <option value="DIRECT_PC">Direct PC / Switch Kantor</option>
+                  </select>
+                </Field>
+              </div>
+
+              {/* HTB Port Selector */}
+              {selectedHtbBoxDetail && (
+                <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-primary">
+                      Pilih Port Terminasi pada Box {selectedHtbBoxDetail.name}:
+                    </span>
+                    <span className="text-[10px] text-muted font-mono">
+                      {selectedHtbBoxDetail.ports?.length || 0} Total Port
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+                    {selectedHtbBoxDetail.ports?.map(p => {
+                      const isSelected = form.htbPortId === p.id
+                      const isOccupiedByOther = (p.customers?.length > 0 && p.customers[0].id !== id) || p.role === 'UPLINK' || p.role === 'CASCADE'
+                      const isFO = p.portType === 'FO'
+                      const isWdmB = p.wavelength === '1550'
+
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          disabled={isOccupiedByOther}
+                          onClick={() => set('htbPortId', p.id)}
+                          className={`p-2.5 rounded-lg border text-left transition-all text-xs flex flex-col justify-between ${
+                            isSelected
+                              ? 'border-[var(--accent)] bg-[var(--accent)]/15 text-primary ring-2 ring-[var(--accent)]'
+                              : isOccupiedByOther
+                                ? 'border-[var(--border)] bg-[var(--bg-card)] opacity-40 cursor-not-allowed text-muted'
+                                : 'border-[var(--border)] bg-[var(--bg-card)] hover:border-cyan-400 text-primary'
+                          }`}
+                        >
+                          <div className="flex justify-between items-center w-full mb-1">
+                            <span className="font-mono font-bold">{p.label}</span>
+                            <span className="text-[9px] font-mono px-1 rounded bg-[var(--border)] text-muted">
+                              {isFO ? (isWdmB ? '1550' : '1310') : 'RJ45'}
+                            </span>
+                          </div>
+
+                          <div className="text-[10px] truncate text-muted">
+                            {isOccupiedByOther ? (
+                              p.role === 'UPLINK' ? 'Uplink In' : p.role === 'CASCADE' ? 'Estafet' : (p.customers?.[0]?.name || 'Terpakai')
+                            ) : isSelected ? (
+                              '✓ Terpilih'
+                            ) : (
+                              'Tersedia'
+                            )}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* JALUR PON (ODP) FORM */
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="ODP" hint="Optical Distribution Point">
+                  <select value={form.odpId} onChange={e => { set('odpId', e.target.value); set('odpPort', ''); set('splitterPortId', '') }} className={IC}>
+                    <option value="">— Pilih ODP —</option>
+                    {odps.map(o => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                {(!selectedOdp || !selectedOdp.splitters?.length) && (
+                  <Field label="Port ODP" hint={selectedOdp ? `Kapasitas ${selectedOdp.capacity ?? '?'} port` : 'Pilih ODP dulu'}>
+                    <input
+                      type="number" min="1" max="64"
+                      value={form.odpPort}
+                      onChange={setEv('odpPort')}
+                      placeholder="Nomor port"
+                      className={IC + ' font-mono'}
+                      disabled={!form.odpId}
+                    />
+                  </Field>
+                )}
+              </div>
+
+              {/* Port visual selector */}
+              {(selectedOdpDetail || selectedOdp) && (
+                <OdpPortSelector
+                  odp={selectedOdpDetail || selectedOdp}
+                  value={portSelectorValue}
+                  onChange={handlePortSelect}
+                  currentCustomerId={isEdit ? id : null}
+                />
+              )}
+            </>
           )}
         </Section>
 

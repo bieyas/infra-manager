@@ -51,6 +51,10 @@ export class VsolHttpDriver extends BaseDriver {
       ponPower:    false,
       onuList:     true,
       onuDetail:   true,
+      onuAutofind:  true,
+      onuProvision: true,
+      onuReboot:    true,
+      onuDeregister: true,
     }
   }
 
@@ -63,6 +67,7 @@ export class VsolHttpDriver extends BaseDriver {
       || (!proto && [443, 2029, 8443].includes(device.mgmtPort))
     this._baseUrl = `${useHttps ? 'https' : 'http'}://${device.ip}:${device.mgmtPort || 8081}`
     this._cookie  = null
+    this.sshPort = Number(device.sshPort || process.env.OLT_SSH_PORT || 2213)
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -255,7 +260,162 @@ export class VsolHttpDriver extends BaseDriver {
     const html = await this._get(`/action/onuopmdiag.html?select=${ponIdx}`)
     return _parseOnuDiagTable(html, ponIdx)
   }
+
+  // ?? ZTP & Autofind ?????????????????????????????????????????????????????????
+
+  async getAutofindOnus() {
+    const ponCount = this.device.ponCount || 4
+    const allOnus = []
+
+    for (let i = 0; i < ponCount; i++) {
+      const ponIdx = i + 1
+      const port = `0/${ponIdx}`
+      try {
+        const [statusList, diagMap] = await Promise.all([
+          this._getOnuStatusPage(ponIdx).catch(() => []),
+          this._getOnuDiagPage(ponIdx).catch(() => ({})),
+        ])
+
+        for (const onu of statusList) {
+          const diag = diagMap[onu.index] || {}
+          allOnus.push({
+            ...onu,
+            port,
+            rxPower: diag.rxPower ?? null,
+            txPower: diag.txPower ?? null,
+            voltage: diag.voltage ?? null,
+            temperature: diag.temp ?? null,
+            biasCurrent: diag.bias ?? null,
+            opticalDistance: diag.distance ?? onu.distance ?? null,
+          })
+        }
+      } catch (err) {
+        console.warn(`[VsolHttp] Failed to scan PON ${port}: ${err.message}`)
+      }
+    }
+
+    return allOnus
+  }
+
+  async _runSshConfig(lines) {
+    const host = this.device.ip
+    const port = this.sshPort || 2213
+    const username = this.device.mgmtUsername || 'admin'
+    const password = this.opts?.password || this.password || 'admin'
+
+    const { Client: SshClient } = await import('ssh2')
+    const client = new SshClient()
+
+    return new Promise((resolve, reject) => {
+      let timer = setTimeout(() => {
+        client.end()
+        reject(new Error('SSH config execution timed out (15s)'))
+      }, 15000)
+
+      client.on('error', err => {
+        clearTimeout(timer)
+        reject(err)
+      })
+
+      client.on('ready', () => {
+        client.shell({ term: 'vt100', cols: 120, rows: 40 }, (err, stream) => {
+          if (err) {
+            clearTimeout(timer)
+            client.end()
+            return reject(err)
+          }
+
+          let buffer = ''
+          stream.on('data', data => {
+            buffer += data.toString()
+            if (buffer.toLowerCase().includes('password:') && !buffer.includes('User Login')) {
+              stream.write(`${password}\r\n`)
+            }
+          })
+
+          stream.on('close', () => {
+            clearTimeout(timer)
+            client.end()
+            resolve(buffer)
+          })
+
+          const script = [
+            'enable',
+            `${password}`,
+            'configure terminal',
+            ...lines,
+            'exit',
+            'write',
+            'exit'
+          ].join('\r\n') + '\r\n'
+
+          stream.write(script)
+          setTimeout(() => {
+            stream.write('exit\r\n')
+            setTimeout(() => client.end(), 1000)
+          }, 2500)
+        })
+      })
+
+      client.connect({
+        host,
+        port,
+        username,
+        password,
+        readyTimeout: 10000,
+      })
+    })
+  }
+
+  async provisionOnu({ ponPort, onuId, mac, description, srvProfileId = 609 }) {
+    const pPort = String(ponPort).replace(/^epon/i, '')
+    const id = Number(onuId)
+    const cleanDesc = String(description || '').replace(/[^a-zA-Z0-9_\-\.\s]/g, '').trim().slice(0, 31)
+
+    const commands = [
+      `interface epon ${pPort}`,
+    ]
+    if (mac) {
+      commands.push(`confirm onu mac ${mac.toLowerCase()} onuid ${id}`)
+    }
+    if (cleanDesc) {
+      commands.push(`onu ${id} description ${cleanDesc}`)
+    }
+    if (srvProfileId) {
+      commands.push(`onu ${id} profile srv id ${srvProfileId}`)
+    }
+
+    const output = await this._runSshConfig(commands)
+    return { success: true, ponPort: pPort, onuId: id, description: cleanDesc, srvProfileId, output }
+  }
+
+  async rebootOnu({ ponPort, onuId }) {
+    const pPort = String(ponPort).replace(/^epon/i, '')
+    const id = Number(onuId)
+    const commands = [
+      `interface epon ${pPort}`,
+      `reset onu ${id}`,
+    ]
+    const output = await this._runSshConfig(commands)
+    return { success: true, ponPort: pPort, onuId: id, output }
+  }
+
+  async deregisterOnu({ ponPort, onuId, mac }) {
+    const pPort = String(ponPort).replace(/^epon/i, '')
+    const id = Number(onuId)
+    const commands = [
+      `interface epon ${pPort}`,
+      `deregister onu ${id}`,
+      `no onu ${id} description`,
+    ]
+    if (mac) {
+      commands.push(`no confirm onu mac ${mac.toLowerCase()}`)
+    }
+    const output = await this._runSshConfig(commands)
+    return { success: true, ponPort: pPort, onuId: id, output }
+  }
 }
+
 
 // ── Static HTML parsers ────────────────────────────────────────────────────
 

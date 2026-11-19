@@ -8,27 +8,169 @@ router.use(authenticate)
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function ratioToCapacity(ratio) {
-  const map = { R1_2: 2, R1_4: 4, R1_8: 8, R1_16: 16, R1_32: 32 }
-  return map[ratio] || null
+  if (!ratio) return null
+  const map = { R1_2: 2, R1_4: 4, R1_8: 8, R1_16: 16, R1_32: 32, '1:2': 2, '1:4': 4, '1:8': 8, '1:16': 16, '1:32': 32 }
+  if (map[ratio]) return map[ratio]
+  const m = String(ratio).match(/(\d+)$/)
+  return m ? parseInt(m[1], 10) : null
 }
 
 /** Hitung kapasitas aktual: prioritas splitters[].ports, lalu splitterRatio */
+/** Helper untuk parse uplinkPort baik format compound (splitterId-portNum) atau simple (portNum) */
+async function parseUplinkPort(uplinkPort, uplinkOdpId, tx) {
+  if (!uplinkPort) return { splitterId: null, portNumber: null };
+  const str = String(uplinkPort).trim();
+  if (str.includes('-')) {
+    const [sId, pNum] = str.split('-');
+    return { splitterId: sId, portNumber: parseInt(pNum, 10) };
+  }
+  if (str.includes(':')) {
+    const [sId, pNum] = str.split(':');
+    return { splitterId: sId, portNumber: parseInt(pNum, 10) };
+  }
+  try {
+    const directPort = await tx.splitterPort.findUnique({
+      where: { id: str },
+      select: { splitterInstanceId: true, portNumber: true }
+    });
+    if (directPort) {
+      return { splitterId: directPort.splitterInstanceId, portNumber: directPort.portNumber };
+    }
+  } catch {}
+
+  if (uplinkOdpId) {
+    const parentSplitter = await tx.splitterInstance.findFirst({
+      where: { odpId: uplinkOdpId },
+      orderBy: { sequenceOrder: 'asc' }
+    });
+    if (parentSplitter) {
+      const pNum = parseInt(str, 10);
+      if (!isNaN(pNum)) return { splitterId: parentSplitter.id, portNumber: pNum };
+    }
+  }
+  return { splitterId: null, portNumber: null };
+}
+
 function computeCapacity(odp) {
   if (odp.splitters?.length > 0) {
     const fromPorts = odp.splitters.reduce((sum, s) => {
-      const portCount = s.ports?.length ?? s.splitterType?.outputCount ?? 0
-      return sum + portCount
+      if (s.ports?.length > 0) {
+        const dropPorts = s.ports.filter(p => p.portType !== 'PASS_THROUGH' && p.connectedToType !== 'SPLITTER').length
+        return sum + dropPorts
+      }
+      const isAsym = s.splitterType?.category === 'ASYMMETRIC'
+      return sum + (isAsym ? 0 : (s.splitterType?.outputCount ?? 0))
     }, 0)
     if (fromPorts > 0) return fromPorts
   }
   return ratioToCapacity(odp.splitterRatio) ?? 0
 }
 
-/** After customer save, sync usedPorts on parent ODP */
-async function syncOdpUsedPorts(odpId) {
+const SPLICE_LOSS = 0.2
+
+function calcAttenuation(outputs) {
+  if (!outputs || outputs <= 1) return 0
+  return parseFloat((3.5 + 10 * Math.log10(outputs)).toFixed(2))
+}
+
+function computeSplitterPortPowers(splitters, baseInputPower, allTypes) {
+  const sorted = [...splitters].sort((a, b) => (a.sequenceOrder || 1) - (b.sequenceOrder || 1))
+  const powerAtEachSplitter = []
+  let currentFeederPower = baseInputPower != null ? Number(baseInputPower) : null
+
+  return sorted.map((sp, idx) => {
+    let typeId = sp.splitterTypeId || sp.type?.id
+    let splitterType = allTypes.find(t => t.id === typeId || t.code === typeId)
+    if (!splitterType && typeId) {
+      const codeMatch = String(typeId).match(/R1_(\d+)/)
+      const code = codeMatch ? `1:${codeMatch[1]}` : typeId
+      splitterType = allTypes.find(t => t.code === code)
+    }
+
+    const isAsym = splitterType?.category === 'ASYMMETRIC'
+    const outputCount = splitterType?.outputCount || sp.outputs || (isAsym ? 2 : 8)
+
+    let inputAtThisSplitter = null
+    if (idx === 0) {
+      inputAtThisSplitter = sp.inputPower != null ? Number(sp.inputPower) : (baseInputPower != null ? Number(baseInputPower) : null)
+    } else {
+      const prev = powerAtEachSplitter[idx - 1]
+      if (prev?.isAsym) {
+        if (!isAsym) {
+          inputAtThisSplitter = prev.dropPortPower !== null
+            ? parseFloat((prev.dropPortPower - SPLICE_LOSS).toFixed(2))
+            : null
+        } else {
+          inputAtThisSplitter = prev.passPortPower !== null
+            ? parseFloat((prev.passPortPower - SPLICE_LOSS).toFixed(2))
+            : null
+        }
+      } else {
+        inputAtThisSplitter = sp.inputPower != null ? Number(sp.inputPower) : currentFeederPower
+      }
+    }
+
+    const portPowers = []
+    const ports = []
+    for (let i = 1; i <= outputCount; i++) {
+      const att = isAsym
+        ? (i === 1 ? (splitterType?.attLowOut ?? 7.0) : (splitterType?.attHighOut ?? 1.0))
+        : (splitterType?.attEqual ?? calcAttenuation(outputCount))
+      
+      const calcOut = inputAtThisSplitter !== null
+        ? parseFloat((inputAtThisSplitter - att).toFixed(2))
+        : null
+
+      portPowers.push(calcOut)
+      ports.push({
+        portNumber: i,
+        attenuation: att,
+        outputPower: calcOut,
+        portType: isAsym ? (i === 1 ? 'DROP' : 'PASS_THROUGH') : 'OUTPUT',
+        portLabel: isAsym ? (i === 1 ? 'Port 1 (Drop)' : 'Port 2 (Pass)') : `Port ${i}`
+      })
+    }
+
+    powerAtEachSplitter.push({
+      sequence: sp.sequenceOrder || (idx + 1),
+      isAsym,
+      inputPower: inputAtThisSplitter,
+      dropPortPower: isAsym && portPowers.length >= 1 ? portPowers[0] : null,
+      passPortPower: isAsym && portPowers.length >= 2 ? portPowers[1] : null,
+    })
+
+    if (isAsym && portPowers.length >= 2) {
+      currentFeederPower = portPowers[1]
+    }
+
+    return {
+      ...sp,
+      splitterType,
+      inputPower: inputAtThisSplitter,
+      calculatedPorts: ports
+    }
+  })
+}
+
+/** After customer save or cascade change, sync usedPorts on parent ODP */
+async function syncOdpUsedPorts(odpId, tx = prisma) {
   if (!odpId) return
-  const count = await prisma.customer.count({ where: { odpId } })
-  await prisma.odp.update({ where: { id: odpId }, data: { usedPorts: count } })
+  const splitterCount = await tx.splitterInstance.count({ where: { odpId } })
+  let count = 0
+  if (splitterCount > 0) {
+    count = await tx.splitterPort.count({
+      where: {
+        splitterInstance: { odpId },
+        connectionStatus: 'CONNECTED',
+        connectedToType: { in: ['CUSTOMER', 'ODP'] }
+      }
+    })
+  } else {
+    const custCount = await tx.customer.count({ where: { odpId } })
+    const dlCount = await tx.odp.count({ where: { uplinkOdpId: odpId } })
+    count = custCount + dlCount
+  }
+  await tx.odp.update({ where: { id: odpId }, data: { usedPorts: count } })
 }
 
 /** Recursive cascade update OLT/PON for all downstream ODPs */
@@ -142,11 +284,13 @@ router.get('/', async (req, res, next) => {
       include: {
         olt: { select: { id: true, name: true, ip: true } },
         uplinkOdp: { select: { id: true, name: true } },
+        downlinkOdps: { select: { id: true, name: true, uplinkPort: true, uplinkOdpCore: true, status: true, usedPorts: true } },
+        customers: { select: { id: true, name: true, odpPort: true, splitterPortId: true, serviceStatus: true } },
         splitters: {
           include: {
             splitterType: { select: { outputCount: true, name: true, category: true } },
             ports: {
-              select: { id: true, portNumber: true, connectionStatus: true, connectedToType: true },
+              select: { id: true, portNumber: true, portLabel: true, portType: true, connectionStatus: true, connectedToType: true, connectedToId: true, outputPower: true },
               orderBy: { portNumber: 'asc' },
             },
           },
@@ -281,12 +425,12 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
 
       // Connect the upstream splitter port
       if (uplinkPort) {
-        const [splitterId, portNumber] = uplinkPort.split('-')
+        const { splitterId, portNumber } = await parseUplinkPort(uplinkPort, uplinkOdpId, tx)
         if (splitterId && portNumber) {
           await tx.splitterPort.updateMany({
             where: {
               splitterInstanceId: splitterId,
-              portNumber: parseInt(portNumber)
+              portNumber: portNumber
             },
             data: {
               connectionStatus: 'CONNECTED',
@@ -301,51 +445,80 @@ router.post('/', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
       // Create splitters if provided
       if (splitters && splitters.length > 0) {
         const allTypes = await tx.splitterType.findMany()
-        for (const sp of splitters) {
-          let typeId = sp.splitterTypeId || sp.type?.id
-          if (!typeId) continue
-          let splitterType = allTypes.find(t => t.id === typeId)
-          if (!splitterType) {
-            const codeMatch = typeId.match(/R1_(\d+)/)
-            const code = codeMatch ? `1:${codeMatch[1]}` : typeId
-            splitterType = allTypes.find(t => t.code === code)
-          }
-          if (!splitterType) continue
-
+        const computed = computeSplitterPortPowers(splitters, odp.inputPower, allTypes)
+        const createdInstances = []
+        for (const sp of computed) {
+          if (!sp.splitterType) continue
           const inst = await tx.splitterInstance.create({
             data: {
               parentType: 'ODP',
               odpId: odp.id,
-              splitterTypeId: splitterType.id,
+              splitterTypeId: sp.splitterType.id,
               sequenceOrder: sp.sequenceOrder || 1,
-              position: sp.position || 'Slot A',
+              position: sp.position || (sp.sequenceOrder === 2 ? 'Slot B' : 'Slot A'),
               portMappings: sp.portMappings || [],
               inputPower: sp.inputPower != null ? Number(sp.inputPower) : null,
             }
           })
-          const outputCount = splitterType.outputCount || sp.outputs || 8
-          const portData = []
-          for (let i = 1; i <= outputCount; i++) {
-            const mapping = (sp.portMappings || []).find(p => p.portNum === i)
-            portData.push({
+          createdInstances.push({ sp, inst })
+        }
+
+        for (let idx = 0; idx < createdInstances.length; idx++) {
+          const { sp, inst } = createdInstances[idx]
+          const nextItem = createdInstances[idx + 1]
+          const isAsym = sp.splitterType.category === 'ASYMMETRIC'
+
+          const portData = sp.calculatedPorts.map(cp => {
+            const mapping = (sp.portMappings || []).find(p => p.portNum === cp.portNumber)
+            const isFbtPort1 = isAsym && cp.portNumber === 1
+            const feedToNext = isFbtPort1 && nextItem && sp.fbtPort1Mode !== 'CUSTOMER_DROP' && mapping?.connectionType !== 'CUSTOMER'
+
+            let connStatus = mapping ? 'CONNECTED' : 'AVAILABLE'
+            let toType = mapping?.connectionType || null
+            let toId = mapping?.assignedTo || null
+            let label = cp.portLabel
+
+            if (feedToNext) {
+              connStatus = 'CONNECTED'
+              toType = 'SPLITTER'
+              toId = nextItem.inst.id
+              label = `Port 1 (Spliced ke ${nextItem.sp.position || 'Slot B'})`
+            }
+
+            return {
               splitterInstanceId: inst.id,
-              portNumber: i,
-              portLabel: `Port ${i}`,
-              portType: 'OUTPUT',
-              connectionStatus: mapping ? 'CONNECTED' : 'AVAILABLE',
-              connectedToType: mapping?.connectionType || null,
-              connectedToId: mapping?.assignedTo || null,
-              attenuation: splitterType.category === 'SYMMETRIC'
-                ? splitterType.attEqual
-                : (i === 1 ? splitterType.attLowOut : splitterType.attHighOut),
-            })
-          }
+              portNumber: cp.portNumber,
+              portLabel: label,
+              portType: cp.portType,
+              connectionStatus: connStatus,
+              connectedToType: toType,
+              connectedToId: toId,
+              attenuation: cp.attenuation,
+              outputPower: cp.outputPower,
+            }
+          })
           if (portData.length > 0) {
             await tx.splitterPort.createMany({ data: portData })
           }
-          console.log(`📦 Created splitter ${splitterType.name} (${outputCount} ports) for ODP ${odp.name}`)
+          console.log(`📦 Created splitter ${sp.splitterType.name} (${portData.length} ports) for ODP ${odp.name}`)
+        }
+        // Sync odp.splitterRatio if primary symmetric splitter exists
+        const primarySym = computed.find(s => s.splitterType?.category === "SYMMETRIC")
+        if (primarySym) {
+          const ratioKey = `R1_${primarySym.splitterType.outputCount}`
+          await tx.odp.update({
+            where: { id: odp.id },
+            data: { splitterRatio: ratioKey }
+          })
+          odp.splitterRatio = ratioKey
         }
       }
+
+      // Sync usedPorts for upstream ODP and current ODP
+      if (odp.uplinkOdpId) {
+        await syncOdpUsedPorts(odp.uplinkOdpId, tx)
+      }
+      await syncOdpUsedPorts(odp.id, tx)
 
       return odp
     })
@@ -387,52 +560,59 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
       }
 
       // Inherit OLT/PON if uplinkOdpId changed
-      if (data.uplinkOdpId && !data.oltId) {
+      if (data.uplinkOdpId && data.uplinkOdpId !== old.uplinkOdpId) {
         const parentOdp = await tx.odp.findUnique({ where: { id: data.uplinkOdpId }, select: { oltId: true, ponPort: true } })
-        if (parentOdp) { data.oltId = parentOdp.oltId; data.ponPort = parentOdp.ponPort }
-      }
-
-      // ── Release old splitter port if port changed ──
-      const newUplinkPort = data.uplinkPort !== undefined ? data.uplinkPort : old.uplinkPort
-      if (old.uplinkPort && old.uplinkPort !== newUplinkPort) {
-        const [oldSplitterId, oldPortNumber] = old.uplinkPort.split('-')
-        if (oldSplitterId && oldPortNumber) {
-          await tx.splitterPort.updateMany({
-            where: {
-              splitterInstanceId: oldSplitterId,
-              portNumber: parseInt(oldPortNumber),
-              connectedToId: req.params.id
-            },
-            data: {
-              connectionStatus: 'AVAILABLE',
-              connectedToType: null,
-              connectedToId: null
-            }
-          })
-          console.log(`🔓 Released SplitterPort ${oldSplitterId}:${oldPortNumber} from ODP ${req.params.id}`)
+        if (parentOdp) {
+          if (!data.oltId) data.oltId = parentOdp.oltId
+          if (!data.ponPort) data.ponPort = parentOdp.ponPort
         }
       }
 
-      // ── Connect new splitter port ──
-      if (newUplinkPort && newUplinkPort !== old.uplinkPort) {
-        const [newSplitterId, newPortNumber] = newUplinkPort.split('-')
-        if (newSplitterId && newPortNumber) {
-          await tx.splitterPort.updateMany({
-            where: {
-              splitterInstanceId: newSplitterId,
-              portNumber: parseInt(newPortNumber)
-            },
-            data: {
-              connectionStatus: 'CONNECTED',
-              connectedToType: 'ODP',
-              connectedToId: req.params.id
-            }
-          })
-          console.log(`🔗 Connected SplitterPort ${newSplitterId}:${newPortNumber} → ODP ${req.params.id}`)
+      // ?? Uplink change handling (move uplink ODP or change port) ??
+      const uplinkChanged = 
+        (data.uplinkType !== undefined && data.uplinkType !== old.uplinkType) ||
+        (data.uplinkOdpId !== undefined && data.uplinkOdpId !== old.uplinkOdpId) ||
+        (data.uplinkPort !== undefined && data.uplinkPort !== old.uplinkPort)
+
+      if (uplinkChanged) {
+        // 1. Release any upstream ports currently connected to this ODP
+        await tx.splitterPort.updateMany({
+          where: {
+            connectedToId: req.params.id,
+            connectedToType: "ODP"
+          },
+          data: {
+            connectionStatus: "AVAILABLE",
+            connectedToType: null,
+            connectedToId: null
+          }
+        })
+        console.log(`?? Released all upstream SplitterPorts previously connected to ODP ${req.params.id}`)
+
+        // 2. Connect new upstream port if new uplink is "odp"
+        const targetUplinkType = data.uplinkType !== undefined ? data.uplinkType : old.uplinkType
+        const targetUplinkOdpId = data.uplinkOdpId !== undefined ? data.uplinkOdpId : old.uplinkOdpId
+        const targetUplinkPort = data.uplinkPort !== undefined ? data.uplinkPort : old.uplinkPort
+
+        if (targetUplinkType === "odp" && targetUplinkOdpId && targetUplinkPort) {
+          const { splitterId: newSplitterId, portNumber: newPortNumber } = await parseUplinkPort(targetUplinkPort, targetUplinkOdpId, tx)
+          if (newSplitterId && newPortNumber) {
+            await tx.splitterPort.updateMany({
+              where: {
+                splitterInstanceId: newSplitterId,
+                portNumber: newPortNumber
+              },
+              data: {
+                connectionStatus: "CONNECTED",
+                connectedToType: "ODP",
+                connectedToId: req.params.id
+              }
+            })
+            console.log(`?? Connected SplitterPort ${newSplitterId}:${newPortNumber} ? ODP ${req.params.id}`)
+          }
         }
       }
 
-      // Update ODP
       const odp = await tx.odp.update({
         where: { id: req.params.id },
         data,
@@ -443,25 +623,18 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
 
       // ── Sync splitters if provided ──
       const splitters = req.body.splitters
+      const effInputPower = data.inputPower !== undefined ? data.inputPower : odp.inputPower
+
       if (splitters !== undefined) {
         const existingSplitters = await tx.splitterInstance.findMany({
           where: { odpId: req.params.id },
           include: { ports: true }
         })
         const allTypes = await tx.splitterType.findMany()
-        const resolveST = (tid) => {
-          if (!tid) return null
-          let st = allTypes.find(t => t.id === tid)
-          if (!st) {
-            const m = tid.match(/R1_(\d+)/)
-            const code = m ? `1:${m[1]}` : tid
-            st = allTypes.find(t => t.code === code)
-          }
-          return st
-        }
+        const computed = computeSplitterPortPowers(splitters, effInputPower, allTypes)
 
-        const newSplitters = splitters.filter(s => !s.id || s.id.startsWith('temp-') || s.id.startsWith('legacy-'))
-        const updateSplitters = splitters.filter(s => s.id && !s.id.startsWith('temp-') && !s.id.startsWith('legacy-'))
+        const newSplitters = computed.filter(s => !s.id || String(s.id).startsWith('temp-') || String(s.id).startsWith('legacy-'))
+        const updateSplitters = computed.filter(s => s.id && !String(s.id).startsWith('temp-') && !String(s.id).startsWith('legacy-'))
         const updateIds = updateSplitters.map(s => s.id)
         const deleteSplitters = existingSplitters.filter(s => !updateIds.includes(s.id))
 
@@ -472,64 +645,133 @@ router.patch('/:id', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) 
 
         // Update existing
         for (const sp of updateSplitters) {
-          const splitterType = resolveST(sp.splitterTypeId || sp.type?.id)
-          if (!splitterType) continue
+          if (!sp.splitterType) continue
           await tx.splitterInstance.update({
             where: { id: sp.id },
             data: {
-              splitterTypeId: splitterType.id,
+              splitterTypeId: sp.splitterType.id,
               sequenceOrder: sp.sequenceOrder || 1,
               position: sp.position || 'Slot A',
               portMappings: sp.portMappings || [],
               inputPower: sp.inputPower != null ? Number(sp.inputPower) : null,
             }
           })
+          // Preserve existing connectionStatus and connectedTo if port was already linked
+          const oldPorts = existingSplitters.find(s => s.id === sp.id)?.ports || []
           await tx.splitterPort.deleteMany({ where: { splitterInstanceId: sp.id } })
-          const outputCount = splitterType.outputCount || sp.outputs || 8
-          const portData = []
-          for (let i = 1; i <= outputCount; i++) {
-            const mapping = (sp.portMappings || []).find(p => p.portNum === i)
-            portData.push({
-              splitterInstanceId: sp.id, portNumber: i, portLabel: `Port ${i}`, portType: 'OUTPUT',
-              connectionStatus: mapping ? 'CONNECTED' : 'AVAILABLE',
-              connectedToType: mapping?.connectionType || null, connectedToId: mapping?.assignedTo || null,
-              attenuation: splitterType.category === 'SYMMETRIC'
-                ? splitterType.attEqual : (i === 1 ? splitterType.attLowOut : splitterType.attHighOut),
-            })
-          }
+          const isAsym = sp.splitterType.category === 'ASYMMETRIC'
+          const nextItem = computed.find(s => (s.sequenceOrder || 1) > (sp.sequenceOrder || 1))
+
+          const portData = sp.calculatedPorts.map(cp => {
+            const oldPort = oldPorts.find(p => p.portNumber === cp.portNumber)
+            const mapping = (sp.portMappings || []).find(p => p.portNum === cp.portNumber)
+            const isFbtPort1 = isAsym && cp.portNumber === 1
+            const feedToNext = isFbtPort1 && nextItem && sp.fbtPort1Mode !== 'CUSTOMER_DROP' && mapping?.connectionType !== 'CUSTOMER' && oldPort?.connectedToType !== 'CUSTOMER'
+
+            let connStatus = oldPort?.connectionStatus || (mapping ? 'CONNECTED' : 'AVAILABLE')
+            let toType = oldPort?.connectedToType || mapping?.connectionType || null
+            let toId = oldPort?.connectedToId || mapping?.assignedTo || null
+            let label = cp.portLabel
+
+            if (feedToNext) {
+              connStatus = 'CONNECTED'
+              toType = 'SPLITTER'
+              toId = nextItem.id
+              label = `Port 1 (Spliced ke ${nextItem.position || 'Slot B'})`
+            } else if (isFbtPort1 && sp.fbtPort1Mode === 'CUSTOMER_DROP' && toType === 'SPLITTER') {
+              connStatus = 'AVAILABLE'
+              toType = null
+              toId = null
+              label = 'Port 1 (Drop Pelanggan)'
+            }
+
+            return {
+              splitterInstanceId: sp.id,
+              portNumber: cp.portNumber,
+              portLabel: label,
+              portType: cp.portType,
+              connectionStatus: connStatus,
+              connectedToType: toType,
+              connectedToId: toId,
+              attenuation: cp.attenuation,
+              outputPower: cp.outputPower,
+            }
+          })
           if (portData.length > 0) await tx.splitterPort.createMany({ data: portData })
         }
 
         // Create new
         for (const sp of newSplitters) {
-          const splitterType = resolveST(sp.splitterTypeId || sp.type?.id)
-          if (!splitterType) continue
+          if (!sp.splitterType) continue
           const inst = await tx.splitterInstance.create({
             data: {
               parentType: 'ODP', odpId: req.params.id,
-              splitterTypeId: splitterType.id,
+              splitterTypeId: sp.splitterType.id,
               sequenceOrder: sp.sequenceOrder || 1,
               position: sp.position || 'Slot A',
               portMappings: sp.portMappings || [],
               inputPower: sp.inputPower != null ? Number(sp.inputPower) : null,
             }
           })
-          const outputCount = splitterType.outputCount || sp.outputs || 8
-          const portData = []
-          for (let i = 1; i <= outputCount; i++) {
-            const mapping = (sp.portMappings || []).find(p => p.portNum === i)
-            portData.push({
-              splitterInstanceId: inst.id, portNumber: i, portLabel: `Port ${i}`, portType: 'OUTPUT',
+          const portData = sp.calculatedPorts.map(cp => {
+            const mapping = (sp.portMappings || []).find(p => p.portNum === cp.portNumber)
+            return {
+              splitterInstanceId: inst.id,
+              portNumber: cp.portNumber,
+              portLabel: cp.portLabel,
+              portType: cp.portType,
               connectionStatus: mapping ? 'CONNECTED' : 'AVAILABLE',
-              connectedToType: mapping?.connectionType || null, connectedToId: mapping?.assignedTo || null,
-              attenuation: splitterType.category === 'SYMMETRIC'
-                ? splitterType.attEqual : (i === 1 ? splitterType.attLowOut : splitterType.attHighOut),
-            })
-          }
+              connectedToType: mapping?.connectionType || null,
+              connectedToId: mapping?.assignedTo || null,
+              attenuation: cp.attenuation,
+              outputPower: cp.outputPower,
+            }
+          })
           if (portData.length > 0) await tx.splitterPort.createMany({ data: portData })
-          console.log(`📦 Created splitter ${splitterType.name} (${outputCount} ports) for ODP ${req.params.id}`)
+          console.log(`📦 Created splitter ${sp.splitterType.name} (${portData.length} ports) for ODP ${req.params.id}`)
+        }
+        // Sync odp.splitterRatio if primary symmetric splitter exists
+        const primarySym = computed.find(s => s.splitterType?.category === "SYMMETRIC")
+        if (primarySym) {
+          const ratioKey = `R1_${primarySym.splitterType.outputCount}`
+          await tx.odp.update({
+            where: { id: req.params.id },
+            data: { splitterRatio: ratioKey }
+          })
+          odp.splitterRatio = ratioKey
+        }
+      } else if (data.inputPower !== undefined) {
+        // splitters not provided, but inputPower changed -> recalculate outputPower for all ports
+        const existing = await tx.splitterInstance.findMany({
+          where: { odpId: req.params.id },
+          include: { splitterType: true, ports: true },
+          orderBy: { sequenceOrder: 'asc' }
+        })
+        if (existing.length > 0) {
+          const allTypes = await tx.splitterType.findMany()
+          const computed = computeSplitterPortPowers(existing, data.inputPower, allTypes)
+          for (const sp of computed) {
+            await tx.splitterInstance.update({
+              where: { id: sp.id },
+              data: { inputPower: sp.inputPower != null ? Number(sp.inputPower) : null }
+            })
+            for (const cp of sp.calculatedPorts) {
+              await tx.splitterPort.updateMany({
+                where: { splitterInstanceId: sp.id, portNumber: cp.portNumber },
+                data: { attenuation: cp.attenuation, outputPower: cp.outputPower }
+              })
+            }
+          }
         }
       }
+
+      // Sync usedPorts for old and target uplink ODPs and current ODP
+      if (uplinkChanged) {
+        if (old.uplinkOdpId) await syncOdpUsedPorts(old.uplinkOdpId, tx)
+        const targetOdpId = data.uplinkOdpId !== undefined ? data.uplinkOdpId : old.uplinkOdpId
+        if (targetOdpId) await syncOdpUsedPorts(targetOdpId, tx)
+      }
+      await syncOdpUsedPorts(req.params.id, tx)
 
       // Handle OLT/PON cascade updates (using pre-update 'old' values)
       const oltChanged = data.oltId && data.oltId !== old.oltId
@@ -573,19 +815,19 @@ router.delete('/:id', requireRole('ADMIN'), async (req, res, next) => {
   try {
     const odp = await prisma.odp.findUnique({ 
       where: { id: req.params.id }, 
-      select: { name: true, uplinkPort: true } 
+      select: { name: true, uplinkPort: true, uplinkOdpId: true } 
     })
     if (!odp) return res.status(404).json({ error: 'ODP not found' })
 
     await prisma.$transaction(async (tx) => {
-      // Release the upstream splitter port this ODP is connected to
+      // 1. Release upstream splitter port this ODP is connected to
       if (odp.uplinkPort) {
-        const [splitterId, portNumber] = odp.uplinkPort.split('-')
+        const { splitterId, portNumber } = await parseUplinkPort(odp.uplinkPort, odp.uplinkOdpId, tx)
         if (splitterId && portNumber) {
           await tx.splitterPort.updateMany({
             where: {
               splitterInstanceId: splitterId,
-              portNumber: parseInt(portNumber),
+              portNumber: portNumber,
               connectedToId: req.params.id
             },
             data: {
@@ -594,30 +836,44 @@ router.delete('/:id', requireRole('ADMIN'), async (req, res, next) => {
               connectedToId: null
             }
           })
-          console.log(`🔓 Released upstream SplitterPort ${splitterId}:${portNumber} from ODP ${odp.name}`)
         }
       }
 
-      // Release any other splitter ports connected to this ODP (fallback for data without uplinkPort)
-      const connectedPorts = await tx.splitterPort.findMany({
-        where: { connectedToType: 'ODP', connectedToId: req.params.id }
+      // Release any other splitter ports connected to this ODP
+      await tx.splitterPort.updateMany({
+        where: { connectedToId: req.params.id, connectedToType: 'ODP' },
+        data: {
+          connectionStatus: 'AVAILABLE',
+          connectedToType: null,
+          connectedToId: null
+        }
       })
 
-      if (connectedPorts.length > 0) {
-        await tx.splitterPort.updateMany({
-          where: { connectedToType: 'ODP', connectedToId: req.params.id },
-          data: {
-            connectionStatus: 'AVAILABLE',
-            connectedToType: null,
-            connectedToId: null
-          }
-        })
+      // 2. Detach customers gracefully (avoid FK error on splitterPortId)
+      await tx.customer.updateMany({
+        where: { odpId: req.params.id },
+        data: {
+          odpId: null,
+          odpPort: null,
+          splitterPortId: null
+        }
+      })
 
-        console.log(`🔓 Released ${connectedPorts.length} port(s) connected to ODP ${odp.name}`)
-      }
+      // 3. Detach child ODPs
+      await tx.odp.updateMany({
+        where: { uplinkOdpId: req.params.id },
+        data: {
+          uplinkOdpId: null,
+          uplinkPort: null
+        }
+      })
 
-      // Delete the ODP
+      // 4. Delete the ODP (splitters and ports cascade automatically via DB schema)
       await tx.odp.delete({ where: { id: req.params.id } })
+      if (odp.uplinkOdpId) {
+        await syncOdpUsedPorts(odp.uplinkOdpId, tx)
+      }
+      console.log(`🗑️ Deleted ODP ${odp.name} and unlinked all customer/cascade relations`)
     })
 
     res.status(204).end()

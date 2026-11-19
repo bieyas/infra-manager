@@ -16,8 +16,9 @@ export function authenticate(req, res, next) {
 }
 
 export function requireRole(...roles) {
+  const allowed = roles.flat()
   return (req, res, next) => {
-    if (!roles.includes(req.user?.role)) {
+    if (!allowed.includes(req.user?.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' })
     }
     next()

@@ -63,3 +63,12 @@ backend/data/
 portal/backend/data/
 portal/**/*.db*
 
+
+# Backup files
+*.bak*
+*.bak
+*.bak2
+
+# Scratch debug / check scripts
+backend/*.mjs
+backend/*.cjs

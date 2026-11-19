@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import {
@@ -21,18 +21,21 @@ import {
   Users,
   UserRound,
   Headphones,
+  Cpu,
 } from 'lucide-react'
 import Tooltip from '../ui/Tooltip'
 import { useAlerts } from '../../context/AlertsContext'
 import { useAuth } from '../../context/AuthContext'
 import { hasFeatureAccess, NAV_PERMISSION_MAP } from '../../lib/permissions'
+import { api } from '../../lib/api'
 
 const NAV_TOP = [
   { label: 'Dashboard',        to: '/',           icon: LayoutDashboard },
   { label: 'Helpdesk & Tiket', to: '/helpdesk',   icon: Headphones },
   { label: 'Pelanggan',        to: '/customers',  icon: UserRound },
-  { label: 'Devices',      to: '/devices',    icon: Server },
-  { label: 'Interfaces',   to: '/interfaces', icon: Layers },
+  { label: 'Devices',          to: '/devices',    icon: Server },
+  { label: 'Accel-PPP (BNG)',  to: '/accel-ppp',  icon: Cpu },
+  { label: 'Interfaces',       to: '/interfaces', icon: Layers },
   { label: 'Topology',     to: '/topology',   icon: Network },
   { label: 'Traffic',      to: '/traffic',    icon: Activity },
   { label: 'Wireless',     to: '/wireless',   icon: Wifi },
@@ -44,6 +47,7 @@ const NAV_TOP = [
 const NAV_FTTH = [
   { label: 'Peta FTTH',    to: '/ftth',       icon: Map },
   { label: 'ODP',          to: '/odp',        icon: Cable },
+  { label: 'Box HTB',      to: '/htb',        icon: Box },
 ]
 
 const NAV_BOTTOM = [
@@ -55,8 +59,11 @@ const NAV_ADMIN = [
 ]
 
 /** Filter nav items based on user permissions */
-function filterNav(items, user) {
+function filterNav(items, user, accelEnabled = true) {
   return items.filter(item => {
+    if (item.to === '/accel-ppp') {
+      if (!accelEnabled && user?.role !== 'ADMIN') return false
+    }
     const key = NAV_PERMISSION_MAP[item.to]
     return hasFeatureAccess(user, key)
   })
@@ -101,9 +108,20 @@ export default function Sidebar({ collapsed }) {
   const location = useLocation()
   const ftthActive = ['/ftth','/odp','/customers'].some(p => location.pathname.startsWith(p))
   const [ftthOpen, setFtthOpen] = useState(ftthActive)
+  const [accelEnabled, setAccelEnabled] = useState(true)
+
+  useEffect(() => {
+    api.get('/accel-ppp/config')
+      .then(cfg => {
+        if (cfg && typeof cfg.enabled === 'boolean') {
+          setAccelEnabled(cfg.enabled)
+        }
+      })
+      .catch(() => {})
+  }, [location.pathname])
 
   // Filter nav items by user permissions
-  const topItems    = filterNav(NAV_TOP, user)
+  const topItems    = filterNav(NAV_TOP, user, accelEnabled)
   const ftthItems   = filterNav(NAV_FTTH, user)
   const bottomItems = filterNav(NAV_BOTTOM, user)
   const adminItems  = filterNav(NAV_ADMIN, user)
