@@ -1,3 +1,4 @@
+import ExcelJS from 'exceljs'
 import { Router } from 'express'
 import prisma from '../lib/prisma.js'
 import { authenticate, requireRole } from '../middleware/auth.js'
@@ -221,6 +222,428 @@ export async function assertPortAvailable({ odpId, odpPort, splitterPortId, excl
   return { available: true, resolvedPortId: targetPortId }
 }
 
+
+// ── Helper: Extract Coordinates from Maps URL ─────────────────────────────────
+function extractCoordsFromUrl(urlStr) {
+  if (!urlStr || typeof urlStr !== 'string') return null
+  let m = urlStr.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/)
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) }
+  m = urlStr.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) }
+  m = urlStr.match(/[?&](?:q|query|ll)=(-?\d+\.\d+),(-?\d+\.\d+)/)
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) }
+  return null
+}
+
+// ── GET /api/customers/resolve-maps-url ───────────────────────────────────────
+router.get('/resolve-maps-url', async (req, res, next) => {
+  try {
+    const rawUrl = (req.query.url || '').trim()
+    if (!rawUrl) return res.status(400).json({ error: 'Parameter url diperlukan' })
+    
+    // Check if it already has coordinates
+    let coords = extractCoordsFromUrl(rawUrl)
+    if (coords) {
+      return res.json({ success: true, lat: coords.lat, lng: coords.lng, resolvedUrl: rawUrl })
+    }
+
+    if (!/https?:\/\/([a-zA-Z0-9_-]+\.)*(google\.com|goo\.gl|page\.link)\//i.test(rawUrl)) {
+      return res.status(400).json({ error: 'URL harus berupa tautan Google Maps' })
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
+    const resp = await fetch(rawUrl, {
+      method: 'HEAD',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    })
+    clearTimeout(timeout)
+    const finalUrl = resp.url || rawUrl
+    coords = extractCoordsFromUrl(finalUrl)
+
+    if (!coords) {
+      return res.status(422).json({
+        error: 'Tidak dapat mengekstrak koordinat dari link Google Maps ini',
+        resolvedUrl: finalUrl
+      })
+    }
+
+    res.json({
+      success: true,
+      lat: coords.lat,
+      lng: coords.lng,
+      resolvedUrl: finalUrl
+    })
+  } catch (err) {
+    res.status(500).json({ error: 'Gagal memproses URL: ' + err.message })
+  }
+})
+
+
+// ── GET /api/customers/export-coords-excel ────────────────────────────────────
+router.get('/export-coords-excel', async (req, res, next) => {
+  try {
+    const customers = await prisma.customer.findMany({
+      select: {
+        customerId: true,
+        name: true,
+        pppoeUsername: true,
+        phone: true,
+        address: true,
+        lat: true,
+        lng: true,
+      },
+      orderBy: { customerId: 'asc' },
+    })
+
+    const wb = new ExcelJS.Workbook()
+    wb.creator = 'InfraManager'
+    wb.created = new Date()
+
+    // 1. Sheet Data Pelanggan
+    const ws = wb.addWorksheet('Data Pelanggan', {
+      views: [{ state: 'frozen', ySplit: 1 }]
+    })
+
+    ws.columns = [
+      { header: 'ID Pelanggan', key: 'customerId', width: 16 },
+      { header: 'Nama Pelanggan', key: 'name', width: 28 },
+      { header: 'Username PPPoE', key: 'pppoeUsername', width: 22 },
+      { header: 'No. Telepon', key: 'phone', width: 18 },
+      { header: 'Alamat', key: 'address', width: 34 },
+      { header: 'Latitude', key: 'lat', width: 15 },
+      { header: 'Longitude', key: 'lng', width: 15 },
+      { header: 'Titik Koordinat / Link Maps (Paling Mudah)', key: 'rawCoord', width: 44 },
+      { header: 'Status Saat Ini', key: 'status', width: 22 }
+    ]
+
+    const headerRow = ws.getRow(1)
+    headerRow.height = 28
+    headerRow.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF1E293B' }
+      }
+      cell.font = {
+        name: 'Calibri',
+        size: 11,
+        bold: true,
+        color: { argb: 'FFFFFFFF' }
+      }
+      cell.alignment = { vertical: 'middle', horizontal: 'center' }
+    })
+
+    const cellH = headerRow.getCell(8)
+    cellH.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF0F766E' }
+    }
+
+    customers.forEach((c, idx) => {
+      const hasCoord = c.lat && c.lng
+      const row = ws.addRow({
+        customerId: c.customerId,
+        name: c.name,
+        pppoeUsername: c.pppoeUsername || '',
+        phone: c.phone || '',
+        address: c.address || '',
+        lat: c.lat ? Number(c.lat) : '',
+        lng: c.lng ? Number(c.lng) : '',
+        rawCoord: hasCoord ? `${c.lat}, ${c.lng}` : '',
+        status: hasCoord ? 'SUDAH ADA TIKOR' : 'BELUM ADA TIKOR'
+      })
+
+      row.height = 20
+      row.alignment = { vertical: 'middle' }
+
+      if (idx % 2 === 1) {
+        row.eachCell((cell, colNumber) => {
+          if (colNumber !== 8) {
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'FFF8FAFC' }
+            }
+          }
+        })
+      }
+
+      const targetCell = row.getCell(8)
+      targetCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFFFFBEB' }
+      }
+
+      const statusCell = row.getCell(9)
+      if (hasCoord) {
+        statusCell.font = { color: { argb: 'FF15803D' }, bold: true }
+      } else {
+        statusCell.font = { color: { argb: 'FFB45309' } }
+      }
+    })
+
+    ws.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: customers.length + 1, column: 9 }
+    }
+
+    // 2. Sheet Panduan
+    const guideWs = wb.addWorksheet('Panduan Pengisian')
+    guideWs.columns = [
+      { header: 'No', width: 6 },
+      { header: 'Panduan & Cara Pengisian', width: 70 },
+      { header: 'Contoh Input yang Valid', width: 45 }
+    ]
+
+    const guideHeader = guideWs.getRow(1)
+    guideHeader.height = 26
+    guideHeader.eachCell((cell) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } }
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+      cell.alignment = { vertical: 'middle', horizontal: 'center' }
+    })
+
+    const guides = [
+      {
+        no: 1,
+        desc: 'CARA TERCEPAT: Buka WhatsApp / Google Maps, salin link lokasi lalu paste langsung ke Kolom H (Titik Koordinat / Link Maps).',
+        sample: 'https://maps.app.goo.gl/GB9cuMXAU8MKU7ov6'
+      },
+      {
+        no: 2,
+        desc: 'Ketik atau paste angka koordinat (Latitude, Longitude) sekaligus di Kolom H.',
+        sample: '-7.522185, 112.230038 ATAU -7.522185 112.230038'
+      },
+      {
+        no: 3,
+        desc: 'Format koma desimal Indonesia juga didukung secara otomatis.',
+        sample: '-7,522185 112,230038'
+      },
+      {
+        no: 4,
+        desc: 'Atau jika Anda sudah memiliki data terpisah, Anda dapat mengisi Kolom F (Latitude) dan Kolom G (Longitude).',
+        sample: 'Lat: -7.522185 | Lng: 112.230038'
+      },
+      {
+        no: 5,
+        desc: 'Kolom ID Pelanggan, Nama, dan Username jangan diubah agar sistem dapat mencocokkan pelanggan secara otomatis.',
+        sample: 'Biarkan ID Pelanggan tetap apa adanya'
+      },
+      {
+        no: 6,
+        desc: 'Setelah selesai mengisi Excel ini, buka aplikasi web InfraManager -> Menu Pelanggan -> Klik "Import Tikor (Excel)" -> Upload file ini.',
+        sample: 'Sistem akan memvalidasi & menampilkan review'
+      }
+    ]
+
+    guides.forEach(g => {
+      const r = guideWs.addRow({ no: g.no, desc: g.desc, sample: g.sample })
+      r.height = 36
+      r.alignment = { vertical: 'middle', wrapText: true }
+    })
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    res.setHeader('Content-Disposition', 'attachment; filename="template_koordinat_pelanggan_jgrt.xlsx"')
+    await wb.xlsx.write(res)
+    res.end()
+  } catch (err) {
+    next(err)
+  }
+})
+
+// ── GET /api/customers/export-coords-template ─────────────────────────────────
+router.get('/export-coords-template', async (req, res, next) => {
+  try {
+    const customers = await prisma.customer.findMany({
+      select: {
+        customerId: true,
+        name: true,
+        pppoeUsername: true,
+        phone: true,
+        address: true,
+        lat: true,
+        lng: true,
+      },
+      orderBy: { customerId: 'asc' },
+    })
+
+    const escapeCsv = (val) => {
+      if (val === null || val === undefined) return ''
+      const str = String(val).replace(/"/g, '""')
+      return `"${str}"`
+    }
+
+    const headers = [
+      'customer_id',
+      'nama_pelanggan',
+      'pppoe_username',
+      'telepon',
+      'alamat',
+      'latitude',
+      'longitude',
+      'titik_koordinat_atau_link_maps',
+      'status_data'
+    ]
+
+    let csvContent = '\ufeff' + headers.join(',') + '\n'
+
+    // Contoh baris petunjuk
+    csvContent += [
+      'CONTOH_01',
+      '"CONTOH: BISA PASTE LINK GOOGLE MAPS"',
+      'user_contoh1',
+      '08123456789',
+      '"Jl. Raya Contoh No. 1"',
+      '',
+      '',
+      '"https://maps.app.goo.gl/GB9cuMXAU8MKU7ov6"',
+      '"(CONTOH - HAPUS/LEWATI BARIS INI)"'
+    ].join(',') + '\n'
+
+    csvContent += [
+      'CONTOH_02',
+      '"CONTOH: BISA KETIK ANGKA LAT,LNG"',
+      'user_contoh2',
+      '08123456789',
+      '"Jl. Raya Contoh No. 2"',
+      '-7.522185',
+      '112.230037',
+      '"-7.522185, 112.230037"',
+      '"(CONTOH - HAPUS/LEWATI BARIS INI)"'
+    ].join(',') + '\n'
+
+    for (const c of customers) {
+      const status = (c.lat && c.lng) ? 'SUDAH_ADA' : 'BELUM_ADA'
+      const row = [
+        escapeCsv(c.customerId),
+        escapeCsv(c.name),
+        escapeCsv(c.pppoeUsername || ''),
+        escapeCsv(c.phone || ''),
+        escapeCsv(c.address || ''),
+        escapeCsv(c.lat != null ? c.lat : ''),
+        escapeCsv(c.lng != null ? c.lng : ''),
+        escapeCsv((c.lat && c.lng) ? `${c.lat}, ${c.lng}` : ''),
+        escapeCsv(status)
+      ]
+      csvContent += row.join(',') + '\n'
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', 'attachment; filename="template_koordinat_pelanggan_jgrt.csv"')
+    res.send(csvContent)
+  } catch (err) { next(err) }
+})
+
+// ── POST /api/customers/bulk-coords ───────────────────────────────────────────
+router.post('/bulk-coords', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
+  try {
+    const { rows } = req.body
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'Array baris data (rows) wajib disertakan' })
+    }
+
+    const parseCoordString = (val) => {
+      if (!val || typeof val !== 'string') return null
+      const str = val.trim()
+      const urlCoords = extractCoordsFromUrl(str)
+      if (urlCoords) return urlCoords
+      let commaMatch = str.match(/(-?\d+),(\d{4,})[\s,]+(\d+),(\d{4,})/)
+      if (commaMatch) {
+        return {
+          lat: parseFloat(`${commaMatch[1]}.${commaMatch[2]}`),
+          lng: parseFloat(`${commaMatch[3]}.${commaMatch[4]}`)
+        }
+      }
+      let dotMatch = str.match(/(-?\d+\.\d+)[\s,]+(\d+\.\d+)/)
+      if (dotMatch) {
+        return {
+          lat: parseFloat(dotMatch[1]),
+          lng: parseFloat(dotMatch[2])
+        }
+      }
+      return null
+    }
+
+    const allCustomers = await prisma.customer.findMany({
+      select: { id: true, customerId: true, name: true, pppoeUsername: true, phone: true }
+    })
+
+    const byId = new Map()
+    const byName = new Map()
+    const byPppoe = new Map()
+
+    for (const c of allCustomers) {
+      if (c.customerId) byId.set(c.customerId.trim().toLowerCase(), c)
+      if (c.name) byName.set(c.name.trim().toLowerCase(), c)
+      if (c.pppoeUsername) byPppoe.set(c.pppoeUsername.trim().toLowerCase(), c)
+    }
+
+    let updatedCount = 0
+    let skippedCount = 0
+    const details = []
+
+    for (let i = 0; i < rows.length; i++) {
+      const item = rows[i]
+      const rawKey = (item.customerId || item.customer_id || item.idPelanggan || item.name || item.nama || item.pppoeUsername || item.pppoe_username || '').toString().trim()
+      if (!rawKey || rawKey.startsWith('CONTOH_')) {
+        continue
+      }
+
+      const lowerKey = rawKey.toLowerCase()
+      const cust = byId.get(lowerKey) || byPppoe.get(lowerKey) || byName.get(lowerKey)
+
+      if (!cust) {
+        skippedCount++
+        details.push({ row: i + 1, key: rawKey, status: 'NOT_FOUND', message: 'Pelanggan tidak ditemukan di database' })
+        continue
+      }
+
+      let lat = null
+      let lng = null
+
+      if (item.lat != null && item.lng != null && !isNaN(parseFloat(item.lat)) && !isNaN(parseFloat(item.lng))) {
+        lat = parseFloat(item.lat)
+        lng = parseFloat(item.lng)
+      } else {
+        const rawTikor = (item.tikor || item.titik_koordinat_atau_link_maps || item.titik_koordinat || item.koordinat || item.mapsUrl || '').toString()
+        const parsed = parseCoordString(rawTikor)
+        if (parsed) {
+          lat = parsed.lat
+          lng = parsed.lng
+        }
+      }
+
+      if (lat == null || lng == null) {
+        skippedCount++
+        details.push({ row: i + 1, customerId: cust.customerId, name: cust.name, status: 'INVALID_COORDS', message: 'Format titik koordinat kosong atau tidak valid' })
+        continue
+      }
+
+      await prisma.customer.update({
+        where: { id: cust.id },
+        data: { lat, lng }
+      })
+
+      updatedCount++
+      details.push({ row: i + 1, customerId: cust.customerId, name: cust.name, lat, lng, status: 'UPDATED' })
+    }
+
+    res.json({
+      success: true,
+      totalReceived: rows.length,
+      updatedCount,
+      skippedCount,
+      details
+    })
+  } catch (err) { next(err) }
+})
 
 // ── GET /api/customers ────────────────────────────────────────────────────────
 

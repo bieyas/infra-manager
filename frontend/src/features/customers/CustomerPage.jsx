@@ -4,12 +4,15 @@ import {
   Plus, Search, RefreshCw, Users, Wifi, WifiOff,
   AlertTriangle, XCircle, Pencil, Trash2,
   ChevronLeft, ChevronRight, MapPin, LayoutGrid, List,
-  Package, Cable, Server,
+  Package, Cable, Server, FileSpreadsheet, Download
 } from 'lucide-react'
 import { useToast } from '../../context/ToastContext'
 import Badge from '../../components/ui/Badge'
 import Button from '../../components/ui/Button'
 import ConfirmModal from '../../components/ui/ConfirmModal'
+import QuickTikorModal from '../../components/ui/QuickTikorModal'
+import BulkImportCoordsModal from '../../components/ui/BulkImportCoordsModal'
+import { MapSettingsProvider } from '../../context/MapSettingsContext'
 import { api } from '../../lib/api'
 import { useCustomerList, useCustomerStats, STATUS_CFG, CONNECTION_CFG } from './useCustomers'
 import CustomerDetail from './CustomerDetail'
@@ -58,7 +61,7 @@ function StatCard({ icon: Icon, label, value, total, color, barColor, onClick })
 
 // ── Customer Card (Grid view) ─────────────────────────────────────────────────
 
-function CustomerCard({ c, onClick, onEdit, onDelete }) {
+function CustomerCard({ c, onClick, onEdit, onDelete, onSetTikor }) {
   const cfg = STATUS_CFG[c.serviceStatus] ?? STATUS_CFG.ACTIVE
   const connectionCfg = CONNECTION_CFG[c.connectionStatus] ?? CONNECTION_CFG.UNKNOWN
   return (
@@ -109,6 +112,25 @@ function CustomerCard({ c, onClick, onEdit, onDelete }) {
           </div>
         )}
 
+        {/* Location / Tikor Badge */}
+        <div className="flex items-center justify-between text-[10px] pt-0.5">
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onSetTikor(c) }}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium border transition-all ${
+              c.lat != null && c.lng != null
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+                : 'bg-[var(--bg-secondary)] border-[var(--border)] text-muted hover:border-[var(--accent)]/50 hover:text-[var(--accent)]'
+            }`}
+            title={c.lat != null && c.lng != null ? `Koordinat: ${c.lat}, ${c.lng}` : 'Atur koordinat pelanggan'}
+          >
+            <MapPin size={9} className={c.lat != null && c.lng != null ? 'text-emerald-400' : 'text-muted'} />
+            <span className="font-mono truncate max-w-[130px]">
+              {c.lat != null && c.lng != null ? `${Number(c.lat).toFixed(4)}, ${Number(c.lng).toFixed(4)}` : '+ Set Titik'}
+            </span>
+          </button>
+        </div>
+
         <div className="flex items-center justify-between pt-1.5 border-t border-[var(--border)]">
           <span className="flex items-center gap-1 text-[9px] text-muted truncate max-w-[70%]" title={c.sourceDevice?.name || 'Device belum diketahui'}>
             <Server size={9} className="shrink-0 opacity-60" />
@@ -132,7 +154,7 @@ function CustomerCard({ c, onClick, onEdit, onDelete }) {
 
 // ── Customer Row (List view) ──────────────────────────────────────────────────
 
-function CustomerRow({ c, onClick, onEdit, onDelete }) {
+function CustomerRow({ c, onClick, onEdit, onDelete, onSetTikor }) {
   const cfg = STATUS_CFG[c.serviceStatus] ?? STATUS_CFG.ACTIVE
   const connectionCfg = CONNECTION_CFG[c.connectionStatus] ?? CONNECTION_CFG.UNKNOWN
   return (
@@ -142,7 +164,7 @@ function CustomerRow({ c, onClick, onEdit, onDelete }) {
     >
       <td className="py-2.5 pl-4 pr-2">
         <div>
-            <p className="text-xs font-medium text-primary">{String(c.name ?? '').toLocaleUpperCase('id-ID')}</p>
+          <p className="text-xs font-medium text-primary">{String(c.name ?? '').toLocaleUpperCase('id-ID')}</p>
           <p className="text-[10px] text-muted font-mono">{c.customerId}</p>
         </div>
       </td>
@@ -174,6 +196,23 @@ function CustomerRow({ c, onClick, onEdit, onDelete }) {
           : <span className="text-[10px] text-muted">—</span>
         }
       </td>
+      <td className="py-2.5 px-2">
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); onSetTikor(c) }}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium border transition-all ${
+            c.lat != null && c.lng != null
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+              : 'bg-[var(--bg-secondary)] border-[var(--border)] text-muted hover:border-[var(--accent)]/50 hover:text-[var(--accent)] hover:bg-[var(--accent-glow)]'
+          }`}
+          title={c.lat != null && c.lng != null ? `Koordinat: ${c.lat}, ${c.lng}` : 'Atur titik lokasi pelanggan'}
+        >
+          <MapPin size={11} className={c.lat != null && c.lng != null ? 'text-emerald-400' : 'text-muted'} />
+          <span className="font-mono">
+            {c.lat != null && c.lng != null ? `${Number(c.lat).toFixed(4)}, ${Number(c.lng).toFixed(4)}` : '+ Set Titik'}
+          </span>
+        </button>
+      </td>
       <td className="py-2.5 pl-2 pr-4">
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 justify-end transition-opacity">
           <button onClick={e => { e.stopPropagation(); onEdit() }}
@@ -204,6 +243,8 @@ export default function CustomerPage() {
   const [view,         setView]         = useState('grid')   // 'grid' | 'list'
   const [detailId,     setDetailId]     = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [tikorTarget,  setTikorTarget]  = useState(null)
+  const [bulkModalOpen, setBulkModalOpen] = useState(false)
 
   const { data: stats, refetch: refetchStats } = useCustomerStats()
 
@@ -257,9 +298,19 @@ export default function CustomerPage() {
           </h1>
           <p className="text-[10px] text-muted mt-0.5">Manajemen data pelanggan FTTH</p>
         </div>
-        <Button onClick={() => navigate('/customers/new')} icon={Plus}>
-          Tambah
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setBulkModalOpen(true)}
+            icon={FileSpreadsheet}
+          >
+            Import Tikor
+          </Button>
+          <Button onClick={() => navigate('/customers/new')} icon={Plus} size="sm">
+            Tambah
+          </Button>
+        </div>
       </div>
 
       {/* ── Stats Cards ── */}
@@ -424,6 +475,7 @@ export default function CustomerPage() {
               onClick={() => setDetailId(c.id)}
               onEdit={() => navigate(`/customers/${c.id}/edit`)}
               onDelete={() => setDeleteTarget(c)}
+              onSetTikor={(cust) => setTikorTarget(cust)}
             />
           ))}
         </div>
@@ -441,6 +493,7 @@ export default function CustomerPage() {
                 <th className="text-left py-2.5 px-2 text-[10px] font-semibold text-muted uppercase tracking-wider hidden lg:table-cell">Paket</th>
                 <th className="text-left py-2.5 px-2 text-[10px] font-semibold text-muted uppercase tracking-wider hidden xl:table-cell">ODP</th>
                 <th className="text-left py-2.5 px-2 text-[10px] font-semibold text-muted uppercase tracking-wider hidden xl:table-cell">PPPoE</th>
+                <th className="text-left py-2.5 px-2 text-[10px] font-semibold text-muted uppercase tracking-wider">Titik GPS</th>
                 <th className="py-2.5 pr-4" />
               </tr>
             </thead>
@@ -451,6 +504,7 @@ export default function CustomerPage() {
                   onClick={() => setDetailId(c.id)}
                   onEdit={() => navigate(`/customers/${c.id}/edit`)}
                   onDelete={() => setDeleteTarget(c)}
+                  onSetTikor={(cust) => setTikorTarget(cust)}
                 />
               ))}
             </tbody>
@@ -488,6 +542,31 @@ export default function CustomerPage() {
 
       {/* Detail modal */}
       {detailId && <CustomerDetail customerId={detailId} onClose={() => setDetailId(null)} />}
+
+      {/* Quick Tikor modal */}
+      {tikorTarget && (
+        <MapSettingsProvider>
+          <QuickTikorModal
+            customer={tikorTarget}
+            isOpen={!!tikorTarget}
+            onClose={() => setTikorTarget(null)}
+            onUpdated={() => {
+              refetch()
+              refetchStats()
+            }}
+          />
+        </MapSettingsProvider>
+      )}
+
+      {/* Bulk Import modal */}
+      <BulkImportCoordsModal
+        isOpen={bulkModalOpen}
+        onClose={() => setBulkModalOpen(false)}
+        onImportSuccess={() => {
+          refetch()
+          refetchStats()
+        }}
+      />
 
       {/* Confirm delete */}
       <ConfirmModal

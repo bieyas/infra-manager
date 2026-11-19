@@ -2,12 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Save, Loader2, ArrowLeft, User, Wifi, Package,
-  MapPin, AlertCircle, Phone, Calendar, Cable,
+  MapPin, AlertCircle, Phone, Calendar, Cable, Crosshair, Sparkles,
 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { useToast } from '../../context/ToastContext'
 import Button from '../../components/ui/Button'
 import LocationPickerModal from '../../components/ui/LocationPickerModal'
+import { smartParseCoordinates } from '../../lib/coordinateParser'
 import { MapSettingsProvider } from '../../context/MapSettingsContext'
 import { capacityFromRatio } from '../distribution/useDistribution'
 
@@ -289,6 +290,54 @@ export default function CustomerForm() {
   const [odps,    setOdps]    = useState([])
   const [errors,  setErrors]  = useState({})
   const [mapOpen, setMapOpen] = useState(false)
+  const [smartPaste, setSmartPaste] = useState('')
+  const [parsingSmartPaste, setParsingSmartPaste] = useState(false)
+  const [smartPasteMsg, setSmartPasteMsg] = useState(null)
+
+  const handleSmartPasteChange = async (val) => {
+    setSmartPaste(val)
+    if (!val.trim()) {
+      setSmartPasteMsg(null)
+      return
+    }
+    setParsingSmartPaste(true)
+    setSmartPasteMsg(null)
+    try {
+      const parsed = await smartParseCoordinates(val)
+      if (parsed) {
+        set('lat', parsed.lat)
+        set('lng', parsed.lng)
+        setSmartPasteMsg({ type: 'success', text: `Terdeteksi (${parsed.source}): ${parsed.lat.toFixed(6)}, ${parsed.lng.toFixed(6)}` })
+      } else {
+        setSmartPasteMsg({ type: 'error', text: 'Format tidak dikenali' })
+      }
+    } catch (err) {
+      setSmartPasteMsg({ type: 'error', text: err.message || 'Gagal mengenali koordinat' })
+    } finally {
+      setParsingSmartPaste(false)
+    }
+  }
+
+  const handleGetGpsHp = () => {
+    if (!navigator.geolocation) {
+      toast.error('Browser tidak mendukung geolokasi GPS')
+      return
+    }
+    setParsingSmartPaste(true)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        set('lat', pos.coords.latitude)
+        set('lng', pos.coords.longitude)
+        setSmartPasteMsg({ type: 'success', text: `GPS HP akurat hingga ±${Math.round(pos.coords.accuracy)}m` })
+        setParsingSmartPaste(false)
+      },
+      (err) => {
+        setSmartPasteMsg({ type: 'error', text: `Gagal membaca GPS: ${err.message}` })
+        setParsingSmartPaste(false)
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    )
+  }
 
   const [form, setForm] = useState({
     customerId:    '',
@@ -562,6 +611,34 @@ export default function CustomerForm() {
             />
           </Field>
 
+          {/* Smart Paste Box */}
+          <div className="p-3 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium text-primary flex items-center gap-1.5">
+                <Sparkles size={13} className="text-amber-400" />
+                Smart Paste Koordinat / Link Google Maps
+              </span>
+              <span className="text-[10px] text-muted">Auto-parse link WA / Maps / format apapun</span>
+            </div>
+            <div className="relative">
+              <input
+                type="text"
+                value={smartPaste}
+                onChange={(e) => handleSmartPasteChange(e.target.value)}
+                placeholder="Tempel link maps.app.goo.gl, share WhatsApp, atau -7.52, 112.23..."
+                className={IC + ' text-xs pr-8'}
+              />
+              {parsingSmartPaste && (
+                <Loader2 size={14} className="animate-spin text-[var(--accent)] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              )}
+            </div>
+            {smartPasteMsg && (
+              <p className={`text-[11px] ${smartPasteMsg.type === 'success' ? 'text-emerald-400 font-medium' : 'text-rose-400'}`}>
+                {smartPasteMsg.text}
+              </p>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <Field label="Latitude" hint="Koordinat GPS" error={errors.lat}>
               <input
@@ -582,17 +659,27 @@ export default function CustomerForm() {
               />
             </Field>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Button type="button" variant="outline" size="sm" icon={MapPin} onClick={() => setMapOpen(true)}>
               Pilih dari Peta
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              icon={Crosshair}
+              onClick={handleGetGpsHp}
+              disabled={parsingSmartPaste}
+            >
+              Ambil Lokasi HP (GPS)
             </Button>
             {form.lat && form.lng && (
               <a
                 href={`https://www.google.com/maps?q=${form.lat},${form.lng}`}
                 target="_blank" rel="noreferrer"
-                className="inline-flex items-center gap-1 text-[10px] text-[var(--accent)] hover:underline"
+                className="inline-flex items-center gap-1 text-[11px] text-[var(--accent)] hover:underline ml-auto"
               >
-                <MapPin size={9} /> {parseFloat(form.lat).toFixed(6)}, {parseFloat(form.lng).toFixed(6)}
+                <MapPin size={11} /> {parseFloat(form.lat).toFixed(6)}, {parseFloat(form.lng).toFixed(6)}
               </a>
             )}
           </div>

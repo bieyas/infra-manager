@@ -72,3 +72,7 @@ portal/**/*.db*
 # Scratch debug / check scripts
 backend/*.mjs
 backend/*.cjs
+
+# Spreadsheets & templates exports
+*.xlsx
+*.csv
