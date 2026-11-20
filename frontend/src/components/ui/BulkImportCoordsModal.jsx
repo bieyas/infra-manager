@@ -76,7 +76,7 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
     }
   }
 
-  // Parse Excel ArrayBuffer
+  // Parse Excel ArrayBuffer (Lazy load xlsx on demand)
   const parseExcelBuffer = async (buffer) => {
     try {
       const XLSX = await import('xlsx')
@@ -90,10 +90,12 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
         return
       }
 
-      const headerRow = rows[0].map(h => String(h || '').trim().toLowerCase())
+      const headerRow = rows[0].map(h => String(h || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, ''))
 
       let keyIdx = headerRow.findIndex(h => h.includes('id') || h.includes('customer'))
       let nameIdx = headerRow.findIndex(h => h.includes('nama') || h.includes('name'))
+      let phoneIdx = headerRow.findIndex(h => h.includes('telepon') || h.includes('phone') || h.includes('hp'))
+      let addrIdx = headerRow.findIndex(h => h.includes('alamat') || h.includes('address'))
       let tikorIdx = headerRow.findIndex(h => h.includes('titik') || h.includes('link') || h.includes('maps') || h.includes('koordinat'))
       let latIdx = headerRow.findIndex(h => h === 'latitude' || h === 'lat')
       let lngIdx = headerRow.findIndex(h => h === 'longitude' || h === 'lng')
@@ -108,13 +110,15 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i]
         const key = String(row[keyIdx] || '').trim()
-        const name = String(row[nameIdx] || key).trim()
+        const name = String(nameIdx !== -1 ? (row[nameIdx] || key) : key).trim()
         if (!key && !name) continue
 
         const isSample = key.toUpperCase().startsWith('CONTOH') || name.toUpperCase().includes('CONTOH')
-        const tikor = String(row[tikorIdx] || '').trim()
-        const latVal = String(row[latIdx] || '').trim()
-        const lngVal = String(row[lngIdx] || '').trim()
+        const tikor = String(tikorIdx !== -1 ? (row[tikorIdx] || '') : '').trim()
+        const latVal = String(latIdx !== -1 ? (row[latIdx] || '') : '').trim()
+        const lngVal = String(lngIdx !== -1 ? (row[lngIdx] || '') : '').trim()
+        const phone = String(phoneIdx !== -1 ? (row[phoneIdx] || '') : '').trim()
+        const address = String(addrIdx !== -1 ? (row[addrIdx] || '') : '').trim()
 
         let hasCoords = false
         if ((latVal && lngVal && !isNaN(parseFloat(latVal)) && !isNaN(parseFloat(lngVal))) || (tikor && tikor.length > 3 && !isSample)) {
@@ -128,6 +132,8 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
           tikor,
           lat: latVal,
           lng: lngVal,
+          phone,
+          address,
           isSample,
           hasCoords
         })
@@ -179,24 +185,31 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
     }
 
     const headerLine = splitCsvLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9_]/g, ''))
-    let keyIdx = headerLine.findIndex(h => h.includes('id') || h.includes('customer') || h.includes('username') || h.includes('nama') || h.includes('name'))
+    let keyIdx = headerLine.findIndex(h => h.includes('id') || h.includes('customer') || h.includes('username'))
+    let nameIdx = headerLine.findIndex(h => h.includes('nama') || h.includes('name'))
+    let phoneIdx = headerLine.findIndex(h => h.includes('telepon') || h.includes('phone') || h.includes('hp'))
+    let addrIdx = headerLine.findIndex(h => h.includes('alamat') || h.includes('address'))
     let tikorIdx = headerLine.findIndex(h => h.includes('tikor') || h.includes('link') || h.includes('maps') || h.includes('koordinat'))
     let latIdx = headerLine.findIndex(h => h === 'latitude' || h === 'lat')
     let lngIdx = headerLine.findIndex(h => h === 'longitude' || h === 'lng')
 
     if (keyIdx === -1) keyIdx = 0
+    if (nameIdx === -1) nameIdx = 1
     if (tikorIdx === -1) tikorIdx = headerLine.length > 7 ? 7 : (headerLine.length - 1)
 
     const parsed = []
     for (let i = 1; i < lines.length; i++) {
       const cols = splitCsvLine(lines[i])
       const key = cols[keyIdx] || ''
-      if (!key) continue
+      const name = nameIdx !== -1 ? (cols[nameIdx] || key) : key
+      if (!key && !name) continue
 
       const isSample = key.startsWith('CONTOH_')
       const tikor = tikorIdx !== -1 ? cols[tikorIdx] : ''
       const latVal = latIdx !== -1 ? cols[latIdx] : ''
       const lngVal = lngIdx !== -1 ? cols[lngIdx] : ''
+      const phone = phoneIdx !== -1 ? cols[phoneIdx] : ''
+      const address = addrIdx !== -1 ? cols[addrIdx] : ''
 
       let hasCoords = false
       if ((latVal && lngVal && !isNaN(parseFloat(latVal))) || (tikor && tikor.trim() && !tikor.includes('CONTOH'))) {
@@ -206,10 +219,12 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
       parsed.push({
         rowNum: i + 1,
         key,
-        name: cols[1] || key,
+        name,
         tikor,
         lat: latVal,
         lng: lngVal,
+        phone,
+        address,
         isSample,
         hasCoords
       })
@@ -278,10 +293,12 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
         name: r.name,
         rawCoord: r.tikor,
         lat: r.lat ? parseFloat(r.lat) : undefined,
-        lng: r.lng ? parseFloat(r.lng) : undefined
+        lng: r.lng ? parseFloat(r.lng) : undefined,
+        phone: r.phone,
+        address: r.address
       }))
 
-      const res = await api.post('/customers/bulk-coords', { items: payload })
+      const res = await api.post('/customers/bulk-coords', { rows: payload })
       setImportResult(res)
       toast?.success(`Berhasil mengupdate koordinat ${res.updatedCount} pelanggan!`)
       onImportSuccess?.()
@@ -311,7 +328,7 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
             </div>
             <div>
               <h3 className="text-sm font-bold text-primary">Import Koordinat Pelanggan (Excel / CSV)</h3>
-              <p className="text-[11px] text-muted">Isi koordinat banyak pelanggan sekaligus melalui Excel</p>
+              <p className="text-[11px] text-muted">Mendukung format template Excel dan ekspor Mona / aplikasi lain</p>
             </div>
           </div>
           <button
@@ -329,7 +346,7 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
           <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="space-y-0.5">
               <h4 className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                <FileDown size={15} /> 1. Download Template Excel (.xlsx)
+                <FileDown size={15} /> Download Template Excel (.xlsx)
               </h4>
               <p className="text-[11px] text-emerald-200/80">
                 Berisi 252 daftar pelanggan terkini. Anda cukup paste link Google Maps atau angka koordinat di Kolom H.
@@ -357,7 +374,7 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
                   : 'text-muted hover:text-primary'
               }`}
             >
-              <UploadCloud size={14} /> Upload File Excel (.xlsx / .csv)
+              <UploadCloud size={14} /> Upload File (.xlsx / .csv)
             </button>
             <button
               type="button"
@@ -396,11 +413,11 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
                     {fileName ? (
                       <span className="text-emerald-400 font-mono">{fileName}</span>
                     ) : (
-                      'Klik untuk memilih file Excel atau seret (drag & drop) ke sini'
+                      'Klik untuk memilih file atau seret (drag & drop) ke sini'
                     )}
                   </p>
                   <p className="text-[11px] text-muted">
-                    Format file yang didukung: <span className="font-semibold text-emerald-400">.xlsx</span>, .xls, atau .csv
+                    Mendukung <span className="font-semibold text-emerald-400">.csv Mona</span>, .xlsx, atau format CSV standar
                   </p>
                 </div>
               </div>
@@ -420,7 +437,7 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
                   setRawText(e.target.value)
                   parseCsvText(e.target.value)
                 }}
-                placeholder="customer_id,nama_pelanggan,...,titik_koordinat_atau_link_maps&#10;CUST-001,Budi,...,https://maps.app.goo.gl/xxx"
+                placeholder="ID Pelanggan,Nama Pelanggan,...,Latitude,Longitude,Link Google Maps"
                 className="w-full px-3 py-2 text-xs font-mono rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] text-primary placeholder:text-muted focus:outline-none focus:border-[var(--accent)]"
               />
             </div>
@@ -471,8 +488,8 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
                           {r.name}
                           <span className="text-[10px] text-muted font-mono block">{r.key}</span>
                         </td>
-                        <td className="py-1.5 px-3 font-mono text-[10px] text-muted truncate max-w-[200px]" title={r.tikor}>
-                          {r.tikor || (r.lat && r.lng ? `${r.lat}, ${r.lng}` : '-')}
+                        <td className="py-1.5 px-3 font-mono text-[10px] text-muted truncate max-w-[200px]" title={r.tikor || `${r.lat}, ${r.lng}`}>
+                          {r.lat && r.lng ? `${r.lat}, ${r.lng}` : (r.tikor || '-')}
                         </td>
                         <td className="py-1.5 px-3">
                           {r.isSample ? (

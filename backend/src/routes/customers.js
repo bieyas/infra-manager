@@ -544,7 +544,7 @@ router.get('/export-coords-template', async (req, res, next) => {
 // ── POST /api/customers/bulk-coords ───────────────────────────────────────────
 router.post('/bulk-coords', requireRole('ADMIN', 'TECHNICIAN'), async (req, res, next) => {
   try {
-    const { rows } = req.body
+    const rows = req.body.rows || req.body.items || []
     if (!Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({ error: 'Array baris data (rows) wajib disertakan' })
     }
@@ -626,9 +626,18 @@ router.post('/bulk-coords', requireRole('ADMIN', 'TECHNICIAN'), async (req, res,
         continue
       }
 
+      const updateData = { lat, lng }
+      const newPhone = (item.phone || item.nomorTelepon || item.telepon || '').toString().trim()
+      if (newPhone && (!cust.phone || cust.phone.trim() === '')) {
+        updateData.phone = newPhone
+      }
+      const newAddress = (item.address || item.alamat || '').toString().trim()
+      if (newAddress && (!cust.address || cust.address.trim() === '')) {
+        updateData.address = newAddress
+      }
       await prisma.customer.update({
         where: { id: cust.id },
-        data: { lat, lng }
+        data: updateData
       })
 
       updatedCount++
