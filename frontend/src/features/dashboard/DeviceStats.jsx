@@ -37,16 +37,14 @@ export function StatusDistribution({ deviceStats, loading, onViewAll }) {
         {loading ? (
           <div className="w-[110px] h-[110px] rounded-full bg-[var(--bg-secondary)] animate-pulse shrink-0" />
         ) : (
-          <ResponsiveContainer width={110} height={110}>
-            <PieChart>
-              <Pie data={pieData} cx="50%" cy="50%"
-                innerRadius={32} outerRadius={50}
-                paddingAngle={3} dataKey="value" strokeWidth={0}
-              >
-                {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
+          <PieChart width={110} height={110} className="shrink-0">
+            <Pie data={pieData} cx="50%" cy="50%"
+              innerRadius={32} outerRadius={50}
+              paddingAngle={3} dataKey="value" strokeWidth={0}
+            >
+              {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+            </Pie>
+          </PieChart>
         )}
         <div className="space-y-2 flex-1">
           {[

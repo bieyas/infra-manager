@@ -3,7 +3,6 @@ import {
   X, UploadCloud, Download, CheckCircle2, AlertCircle,
   FileSpreadsheet, Loader2, RefreshCw, ArrowRight, Eye, Check, FileDown
 } from 'lucide-react'
-import * as XLSX from 'xlsx'
 import { api } from '../../lib/api'
 import { useToast } from '../../context/ToastContext'
 
@@ -78,8 +77,9 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
   }
 
   // Parse Excel ArrayBuffer
-  const parseExcelBuffer = (buffer) => {
+  const parseExcelBuffer = async (buffer) => {
     try {
+      const XLSX = await import('xlsx')
       const workbook = XLSX.read(buffer, { type: 'array' })
       const sheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('pelanggan')) || workbook.SheetNames[0]
       const sheet = workbook.Sheets[sheetName]
@@ -227,8 +227,8 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
 
     if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
       const reader = new FileReader()
-      reader.onload = (evt) => {
-        parseExcelBuffer(evt.target.result)
+      reader.onload = async (evt) => {
+        await parseExcelBuffer(evt.target.result)
       }
       reader.readAsArrayBuffer(file)
     } else {
@@ -250,8 +250,8 @@ export default function BulkImportCoordsModal({ isOpen, onClose, onImportSuccess
 
     if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
       const reader = new FileReader()
-      reader.onload = (evt) => {
-        parseExcelBuffer(evt.target.result)
+      reader.onload = async (evt) => {
+        await parseExcelBuffer(evt.target.result)
       }
       reader.readAsArrayBuffer(file)
     } else {
